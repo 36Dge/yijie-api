@@ -1,0 +1,7 @@
+[workspace]
+name = "yijie-api"
+stack = "Go + PostgreSQL + Redis"
+
+[rules]
+contract_first = true
+audit_required_for_high_risk_operations = true
