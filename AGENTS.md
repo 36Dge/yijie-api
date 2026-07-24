@@ -20,6 +20,10 @@
 
 `cmd/admin-server`、`cmd/scheduler`、`cmd/webhook-server`、`cmd/worker` 和部分模块目录目前仍是占位，Codex 不得假定其能力已经实现。
 
+当前 `make generate` 直接读取相邻 contracts 工作树，尚无 contract version/full
+commit/digest/generator lock，CI 也未执行 generate-drift。它只能用于本地候选生成，
+不能满足不可变消费或 release-ready 门禁；接入真实版本前必须补锁和 CI。
+
 ## 仓库边界
 
 - 不直接实现 Amazon、Temu、Shopee、TikTok Shop 等平台 API 调用细节，该职责属于 `yijie-connectors`；
@@ -52,11 +56,18 @@ interfaces -> application -> domain
 
 ## Contract First
 
-- 对外 API 的源文件位于相邻 `yijie-contracts`，先更新并评审契约，再执行 `make generate`；
+- 每个任务先标记 `contract-impact = none | additive | semantic | breaking`；分类覆盖跨进程、跨仓、跨版本及持久化/重放边界，`none` 必须说明没有可观察变化；
+- 按 `breaking > semantic > additive > none` 的最高风险唯一选择；任一受支持交互可能失效即 breaking，不确定时不能假定 additive/none；
+- 对外 API 的形状、状态/错误、认证/权限、幂等、分页、默认值和审计语义都属于契约；源文件位于相邻 `yijie-contracts`；
+- 契约必须先完成评审、生成/兼容检查并形成不可变 tag 或完整 commit；本仓固定精确引用后，实现才可合并或启用，dirty/floating sibling 只能用于本地候选验证；
 - `internal/interfaces/publicapi/types.gen.go` 是生成文件，禁止手工编辑；
-- 生成后检查 git diff，确保实现、测试和文档与契约一致；
+- 生成后检查 git diff，增加 handler producer conformance，确保实际请求、响应、状态码和错误与契约一致；
+- 新 request 字段先由本仓接受再让 consumer 发送；新 response 字段/enum/event 先确认 consumers 容忍或升级，再由本仓输出；
 - 新增 required 字段、删除字段、收窄类型或改变错误语义前，必须确认兼容策略和版本方案；
 - handler 负责传输 DTO 与应用输入输出之间的显式转换，不让生成 DTO 渗透到 domain。
+
+兄弟元仓存在时同时遵循 `../yijie/docs/dev/contract-first.md`。不得以占位 handler、临时
+DTO、手改生成物或跳过 breaking check 规避门禁。
 
 ## PostgreSQL 与 Migration
 
@@ -114,6 +125,7 @@ make dev              # 迁移后启动本地 API
 
 - 模块边界和依赖方向正确，domain 不依赖传输或持久化细节；
 - 对外行为由契约驱动，生成文件未被手工修改；
+- 当 `contract-impact != none` 时按权威源路由：公共 API 提供契约 tag/完整 commit、全部适用 breaking 基线或 fallback、consumer 清单/pin 及 conformance；私有 schema 提供 migration 不可变引用、旧/新版本数据兼容、受影响服务验证和回滚；不适用的 contracts 字段写 `N/A + 理由`；`none` 只需分类理由；
 - schema 变化有 migration、事务策略、兼容性说明和集成测试；
 - 租户隔离、授权、审批、幂等和审计要求得到满足或明确标记为未实现；
 - lint、race 单元测试及与改动相关的集成测试通过；
