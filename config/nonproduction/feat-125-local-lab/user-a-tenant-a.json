@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "data_classification": "synthetic_only",
+  "issuer": "https://localhost:8443/realms/yijie-local",
+  "subject": "12500000-0000-4000-8000-000000000001",
+  "user_id": "12500000-0000-4000-8000-000000000001",
+  "tenant_id": "12500000-0000-4000-8000-100000000001",
+  "tenant_name": "Synthetic FEAT-125 Tenant A",
+  "role": "tenant_owner",
+  "actor_id": "nonprod:feat-125-g3-local"
+}

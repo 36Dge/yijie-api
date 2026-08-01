@@ -33,6 +33,15 @@ func main() {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
+	var accessHTTPClient *http.Client
+	if config.PermissionProjectionEnabled && config.ServiceProfile == app.ServiceProfileFeat125LocalLab {
+		accessHTTPClient, err = authn.NewLocalLabPinnedCAHTTPClient(config.LocalCAPEMPath, config.LocalCASHA256)
+		if err != nil {
+			logger.Error("invalid local CA configuration", "error", err)
+			os.Exit(1)
+		}
+		defer accessHTTPClient.CloseIdleConnections()
+	}
 
 	startupContext, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
 	pool, err := database.Open(
@@ -53,7 +62,7 @@ func main() {
 	if err == nil && config.PermissionProjectionEnabled {
 		accessKeysContext, cancel := context.WithCancel(context.Background())
 		cancelAccessKeys = cancel
-		accessKeys, err = authn.NewRemoteKeySet(accessKeysContext, config.AccessJWKSURL, nil)
+		accessKeys, err = authn.NewRemoteKeySet(accessKeysContext, config.AccessJWKSURL, accessHTTPClient)
 		if err == nil {
 			var verifier *authn.Verifier
 			verifier, err = authn.NewVerifier(config.AccessIssuer, accessKeys)
@@ -108,7 +117,7 @@ func main() {
 		handlerOptions = append(handlerOptions, app.WithAccessEndpoints(accessHandler))
 	}
 	server := &http.Server{
-		Addr:              ":" + config.Port,
+		Addr:              app.ServerAddress(config),
 		Handler:           app.NewHandler(config, pool, taskService, handlerOptions...),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -118,7 +127,12 @@ func main() {
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("starting yijie-api", "addr", server.Addr, "environment", config.Environment)
+		logger.Info(
+			"starting yijie-api",
+			"addr", server.Addr,
+			"environment", config.Environment,
+			"service_profile", config.ServiceProfile,
+		)
 		serverErrors <- server.ListenAndServe()
 	}()
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -16,10 +17,17 @@ import (
 	taskhttp "github.com/36Dge/yijie-api/internal/modules/tasks/interfaces/http"
 )
 
-const ServiceName = "yijie-api"
+const (
+	ServiceName                   = "yijie-api"
+	ServiceProfileDefault         = "default"
+	ServiceProfileFeat125LocalLab = "feat-125-local-lab"
+	Feat125LocalLabIssuer         = "https://localhost:8443/realms/yijie-local"
+	Feat125LocalLabJWKSURL        = "https://localhost:8443/realms/yijie-local/protocol/openid-connect/certs"
+)
 
 type Config struct {
 	Environment                 string
+	ServiceProfile              string
 	Port                        string
 	PostgresDSN                 string
 	RedisURL                    string
@@ -28,6 +36,8 @@ type Config struct {
 	PermissionProjectionEnabled bool
 	AccessIssuer                string
 	AccessJWKSURL               string
+	LocalCAPEMPath              string
+	LocalCASHA256               string
 }
 
 type Database interface {
@@ -68,8 +78,18 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
+	environment := env("YIJIE_ENV", "local")
+	serviceProfile := env("YIJIE_API_SERVICE_PROFILE", ServiceProfileDefault)
+	if serviceProfile != ServiceProfileDefault && serviceProfile != ServiceProfileFeat125LocalLab {
+		return Config{}, errors.New("YIJIE_API_SERVICE_PROFILE is invalid")
+	}
+	if serviceProfile == ServiceProfileFeat125LocalLab && environment != "local" && environment != "nonproduction" {
+		return Config{}, errors.New("feat-125-local-lab service profile requires a local or nonproduction environment")
+	}
+
 	config := Config{
-		Environment:                 env("YIJIE_ENV", "local"),
+		Environment:                 environment,
+		ServiceProfile:              serviceProfile,
 		Port:                        env("YIJIE_API_PORT", "8080"),
 		PostgresDSN:                 strings.TrimSpace(os.Getenv("YIJIE_API_POSTGRES_DSN")),
 		RedisURL:                    strings.TrimSpace(os.Getenv("YIJIE_API_REDIS_URL")),
@@ -78,12 +98,28 @@ func LoadConfig() (Config, error) {
 		PermissionProjectionEnabled: projectionEnabled,
 		AccessIssuer:                strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_ISSUER")),
 		AccessJWKSURL:               strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_JWKS_URL")),
+		LocalCAPEMPath:              strings.TrimSpace(os.Getenv("YIJIE_API_LOCAL_CA_PEM_PATH")),
+		LocalCASHA256:               strings.TrimSpace(os.Getenv("YIJIE_API_LOCAL_CA_SHA256")),
 	}
 	if config.PostgresDSN == "" {
 		return Config{}, errors.New("YIJIE_API_POSTGRES_DSN is required")
 	}
 	if config.PermissionProjectionEnabled && (config.AccessIssuer == "" || config.AccessJWKSURL == "") {
 		return Config{}, errors.New("enabled permission projection requires YIJIE_API_ACCESS_ISSUER and YIJIE_API_ACCESS_JWKS_URL")
+	}
+	localCAConfigured := config.LocalCAPEMPath != "" || config.LocalCASHA256 != ""
+	if serviceProfile != ServiceProfileFeat125LocalLab && localCAConfigured {
+		return Config{}, errors.New("local CA configuration requires the feat-125-local-lab service profile")
+	}
+	if serviceProfile == ServiceProfileFeat125LocalLab && config.PermissionProjectionEnabled {
+		if config.AccessIssuer != Feat125LocalLabIssuer || config.AccessJWKSURL != Feat125LocalLabJWKSURL {
+			return Config{}, errors.New("feat-125-local-lab permission projection requires the exact local issuer and JWKS URL")
+		}
+		if config.LocalCAPEMPath == "" || !isLowerHexSHA256(config.LocalCASHA256) {
+			return Config{}, errors.New("feat-125-local-lab permission projection requires a local CA PEM path and lowercase SHA-256 pin")
+		}
+	} else if localCAConfigured {
+		return Config{}, errors.New("local CA configuration requires enabled feat-125-local-lab permission projection")
 	}
 	return config, nil
 }
@@ -117,10 +153,19 @@ func NewHandler(config Config, database Database, tasks *application.Service, op
 		mux.HandleFunc("GET /v1/me/capabilities", settings.access.GetMyCapabilities)
 	}
 
-	taskHandler := taskhttp.New(tasks)
-	mux.HandleFunc("POST /v1/tasks", taskHandler.Create)
-	mux.HandleFunc("GET /v1/tasks/{task_id}", taskHandler.Get)
+	if config.ServiceProfile != ServiceProfileFeat125LocalLab {
+		taskHandler := taskhttp.New(tasks)
+		mux.HandleFunc("POST /v1/tasks", taskHandler.Create)
+		mux.HandleFunc("GET /v1/tasks/{task_id}", taskHandler.Get)
+	}
 	return mux
+}
+
+func ServerAddress(config Config) string {
+	if config.ServiceProfile == ServiceProfileFeat125LocalLab {
+		return net.JoinHostPort("127.0.0.1", config.Port)
+	}
+	return ":" + config.Port
 }
 
 func serviceStatus(ctx context.Context, config Config, database Database) publicapi.ServiceStatus {
@@ -181,4 +226,16 @@ func boolEnv(key string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("%s must be a boolean: %w", key, err)
 	}
 	return parsed, nil
+}
+
+func isLowerHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }

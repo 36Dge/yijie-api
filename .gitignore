@@ -6,3 +6,4 @@ bin/
 dist/
 coverage/
 *.log
+config/nonproduction/*.local.json

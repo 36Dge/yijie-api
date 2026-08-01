@@ -8,7 +8,7 @@ CONTRACTS_LOCK ?= contracts/public-api.lock.json
 export YIJIE_API_POSTGRES_DSN
 export YIJIE_API_REDIS_URL
 
-.PHONY: dev test test-integration test-all lint generate generate-check migrate-up migrate-status
+.PHONY: dev test test-integration test-all lint generate generate-check migrate-up migrate-status bootstrap-nonprod-authz
 
 dev: migrate-up
 	go run ./cmd/api-server
@@ -39,3 +39,7 @@ migrate-up:
 
 migrate-status:
 	go run ./cmd/migrate status
+
+bootstrap-nonprod-authz:
+	@test -n "$(INPUT)" || (echo "INPUT is required" >&2; exit 2)
+	go run ./cmd/bootstrap-nonprod-authz --input "$(INPUT)" --profile "$(BOOTSTRAP_PROFILE)"

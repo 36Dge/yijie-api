@@ -88,17 +88,80 @@ func TestAccessEndpointsAreRegisteredOnlyWhenExplicitlyWired(t *testing.T) {
 	}
 }
 
+func TestFeat125LocalLabProfileDoesNotRegisterLegacyTasks(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "create", method: http.MethodPost, path: "/v1/tasks", body: `{}`},
+		{name: "get", method: http.MethodGet, path: "/v1/tasks/not-a-uuid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defaultResponse := httptest.NewRecorder()
+			NewHandler(Config{Environment: "test"}, fakeDatabase{}, nil).ServeHTTP(
+				defaultResponse,
+				httptest.NewRequest(test.method, test.path, strings.NewReader(test.body)),
+			)
+			if defaultResponse.Code == http.StatusNotFound {
+				t.Fatalf("default profile must retain legacy route %s %s", test.method, test.path)
+			}
+
+			localLabResponse := httptest.NewRecorder()
+			NewHandler(
+				Config{Environment: "nonproduction", ServiceProfile: ServiceProfileFeat125LocalLab},
+				fakeDatabase{},
+				nil,
+			).ServeHTTP(
+				localLabResponse,
+				httptest.NewRequest(test.method, test.path, strings.NewReader(test.body)),
+			)
+			if localLabResponse.Code != http.StatusNotFound {
+				t.Fatalf("local-lab profile must not register %s %s: got %d", test.method, test.path, localLabResponse.Code)
+			}
+		})
+	}
+}
+
+func TestServerAddressPinsFeat125LocalLabToIPv4Loopback(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   Config
+		expected string
+	}{
+		{name: "zero value keeps legacy behavior", config: Config{Port: "8080"}, expected: ":8080"},
+		{name: "default profile keeps legacy behavior", config: Config{ServiceProfile: ServiceProfileDefault, Port: "18080"}, expected: ":18080"},
+		{name: "local lab uses loopback", config: Config{ServiceProfile: ServiceProfileFeat125LocalLab, Port: "18080"}, expected: "127.0.0.1:18080"},
+		{name: "local lab host cannot be supplied through port", config: Config{ServiceProfile: ServiceProfileFeat125LocalLab, Port: "0.0.0.0:18080"}, expected: "127.0.0.1:0.0.0.0:18080"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := ServerAddress(test.config); actual != test.expected {
+				t.Fatalf("expected server address %q, got %q", test.expected, actual)
+			}
+		})
+	}
+}
+
 func TestLoadConfigKeepsPermissionProjectionOffByDefault(t *testing.T) {
 	t.Setenv("YIJIE_API_POSTGRES_DSN", "postgres://synthetic.invalid/yijie")
 	t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "")
 	t.Setenv("YIJIE_API_ACCESS_ISSUER", "")
 	t.Setenv("YIJIE_API_ACCESS_JWKS_URL", "")
+	t.Setenv("YIJIE_API_SERVICE_PROFILE", "")
+	t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "")
+	t.Setenv("YIJIE_API_LOCAL_CA_SHA256", "")
 	config, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("load disabled config: %v", err)
 	}
 	if config.PermissionProjectionEnabled {
 		t.Fatal("permission projection must be disabled by default")
+	}
+	if config.ServiceProfile != ServiceProfileDefault {
+		t.Fatalf("expected default service profile, got %q", config.ServiceProfile)
 	}
 }
 
@@ -107,6 +170,8 @@ func TestLoadConfigRequiresIdentitySettingsOnlyWhenProjectionEnabled(t *testing.
 	t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "true")
 	t.Setenv("YIJIE_API_ACCESS_ISSUER", "")
 	t.Setenv("YIJIE_API_ACCESS_JWKS_URL", "")
+	t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "")
+	t.Setenv("YIJIE_API_LOCAL_CA_SHA256", "")
 	if _, err := LoadConfig(); err == nil {
 		t.Fatal("expected enabled projection without identity configuration to fail")
 	}
@@ -119,6 +184,134 @@ func TestLoadConfigRequiresIdentitySettingsOnlyWhenProjectionEnabled(t *testing.
 	}
 	if !config.PermissionProjectionEnabled || config.AccessIssuer == "" || config.AccessJWKSURL == "" {
 		t.Fatalf("unexpected enabled access config: %#v", config)
+	}
+}
+
+func TestLoadConfigValidatesFeat125LocalLabProfile(t *testing.T) {
+	t.Setenv("YIJIE_API_POSTGRES_DSN", "postgres://synthetic.invalid/yijie")
+	t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "")
+	t.Setenv("YIJIE_API_ACCESS_ISSUER", "")
+	t.Setenv("YIJIE_API_ACCESS_JWKS_URL", "")
+	t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileFeat125LocalLab)
+	t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "")
+	t.Setenv("YIJIE_API_LOCAL_CA_SHA256", "")
+	t.Setenv("YIJIE_ENV", "nonproduction")
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("load local-lab profile: %v", err)
+	}
+	if config.ServiceProfile != ServiceProfileFeat125LocalLab {
+		t.Fatalf("unexpected service profile: %#v", config)
+	}
+
+	t.Setenv("YIJIE_ENV", "production")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("local-lab profile must reject production environment")
+	}
+
+	t.Setenv("YIJIE_ENV", "nonproduction")
+	t.Setenv("YIJIE_API_SERVICE_PROFILE", "unknown")
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("unknown service profile must be rejected")
+	}
+}
+
+func TestLoadConfigPinsFeat125LocalLabCA(t *testing.T) {
+	const validDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name       string
+		configure  func(*testing.T)
+		wantErr    bool
+		wantFields bool
+	}{
+		{name: "exact local projection", wantFields: true},
+		{name: "missing CA path", configure: func(t *testing.T) { t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "") }, wantErr: true},
+		{name: "uppercase pin", configure: func(t *testing.T) { t.Setenv("YIJIE_API_LOCAL_CA_SHA256", strings.ToUpper(validDigest)) }, wantErr: true},
+		{name: "wrong issuer", configure: func(t *testing.T) { t.Setenv("YIJIE_API_ACCESS_ISSUER", "https://localhost:8443/realms/other") }, wantErr: true},
+		{name: "wrong JWKS URL", configure: func(t *testing.T) { t.Setenv("YIJIE_API_ACCESS_JWKS_URL", Feat125LocalLabIssuer+"/other") }, wantErr: true},
+		{name: "default profile rejects local CA", configure: func(t *testing.T) { t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileDefault) }, wantErr: true},
+		{name: "disabled projection rejects unused local CA", configure: func(t *testing.T) { t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "false") }, wantErr: true},
+		{name: "production rejects local profile", configure: func(t *testing.T) { t.Setenv("YIJIE_ENV", "production") }, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("YIJIE_API_POSTGRES_DSN", "postgres://synthetic.invalid/yijie")
+			t.Setenv("YIJIE_ENV", "nonproduction")
+			t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileFeat125LocalLab)
+			t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "true")
+			t.Setenv("YIJIE_API_ACCESS_ISSUER", Feat125LocalLabIssuer)
+			t.Setenv("YIJIE_API_ACCESS_JWKS_URL", Feat125LocalLabJWKSURL)
+			t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "/synthetic/local/root.pem")
+			t.Setenv("YIJIE_API_LOCAL_CA_SHA256", validDigest)
+			if test.configure != nil {
+				test.configure(t)
+			}
+
+			config, err := LoadConfig()
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("expected configuration to fail closed")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load exact local-lab configuration: %v", err)
+			}
+			if test.wantFields && (config.LocalCAPEMPath == "" || config.LocalCASHA256 != validDigest) {
+				t.Fatalf("local CA pin was not retained: %#v", config)
+			}
+		})
+	}
+}
+
+func TestLoadConfigPinsFeat125LocalLabProjectionAndLocalCA(t *testing.T) {
+	const validPin = "07a3bb2ef51a5b559fe42b423339f6c886c5e17903b1cf2d8ca26bf1b5574650"
+	setValid := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("YIJIE_ENV", "nonproduction")
+		t.Setenv("YIJIE_API_POSTGRES_DSN", "postgres://synthetic.invalid/yijie")
+		t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "true")
+		t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileFeat125LocalLab)
+		t.Setenv("YIJIE_API_ACCESS_ISSUER", Feat125LocalLabIssuer)
+		t.Setenv("YIJIE_API_ACCESS_JWKS_URL", Feat125LocalLabJWKSURL)
+		t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "/tmp/feat-125-local-ca.pem")
+		t.Setenv("YIJIE_API_LOCAL_CA_SHA256", validPin)
+	}
+
+	t.Run("exact configuration", func(t *testing.T) {
+		setValid(t)
+		config, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("load exact local-lab config: %v", err)
+		}
+		if config.AccessIssuer != Feat125LocalLabIssuer || config.AccessJWKSURL != Feat125LocalLabJWKSURL ||
+			config.LocalCAPEMPath != "/tmp/feat-125-local-ca.pem" || config.LocalCASHA256 != validPin {
+			t.Fatalf("unexpected local-lab config: %#v", config)
+		}
+	})
+
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "issuer drift", key: "YIJIE_API_ACCESS_ISSUER", value: "https://localhost:8443/realms/other"},
+		{name: "JWKS drift", key: "YIJIE_API_ACCESS_JWKS_URL", value: "https://localhost:8443/realms/yijie-local/protocol/openid-connect/other"},
+		{name: "missing CA path", key: "YIJIE_API_LOCAL_CA_PEM_PATH", value: ""},
+		{name: "missing CA pin", key: "YIJIE_API_LOCAL_CA_SHA256", value: ""},
+		{name: "uppercase CA pin", key: "YIJIE_API_LOCAL_CA_SHA256", value: strings.ToUpper(validPin)},
+		{name: "local CA in default profile", key: "YIJIE_API_SERVICE_PROFILE", value: ServiceProfileDefault},
+		{name: "local CA without projection", key: "YIJIE_API_PERMISSION_PROJECTION_ENABLED", value: "false"},
+		{name: "local profile in production", key: "YIJIE_ENV", value: "production"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setValid(t)
+			t.Setenv(test.key, test.value)
+			if _, err := LoadConfig(); err == nil {
+				t.Fatal("expected local-only configuration to fail closed")
+			}
+		})
 	}
 }
 
