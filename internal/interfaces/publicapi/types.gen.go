@@ -9,6 +9,25 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+const (
+	UserBearerScopes userBearerContextKey = "userBearer.Scopes"
+)
+
+// Defines values for CapabilityProjectionSchemaVersion.
+const (
+	N1 CapabilityProjectionSchemaVersion = 1
+)
+
+// Valid indicates whether the value is a known member of the CapabilityProjectionSchemaVersion enum.
+func (e CapabilityProjectionSchemaVersion) Valid() bool {
+	switch e {
+	case N1:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	NotReady ReadinessStatus = "not_ready"
@@ -87,6 +106,29 @@ func (e TaskStatus) Valid() bool {
 	}
 }
 
+// CapabilityKey Open namespaced capability key. The initial values are governance metadata,
+// not a closed enum; consumers must ignore unknown valid values.
+type CapabilityKey = string
+
+// CapabilityProjection defines model for CapabilityProjection.
+type CapabilityProjection struct {
+	// AuthorizationRevision Tenant authorization snapshot revision within the JavaScript safe-integer range.
+	AuthorizationRevision int64 `json:"authorization_revision"`
+
+	// Capabilities Sorted, unique, allow-only capability keys. Unknown valid keys are ignored by consumers.
+	Capabilities []CapabilityKey `json:"capabilities"`
+
+	// ExpiresAt Snapshot expiry, no later than five minutes after issuance.
+	ExpiresAt     time.Time                         `json:"expires_at"`
+	SchemaVersion CapabilityProjectionSchemaVersion `json:"schema_version"`
+
+	// TenantId Verified tenant identifier echoed for context matching, not proof of authorization.
+	TenantId openapi_types.UUID `json:"tenant_id"`
+}
+
+// CapabilityProjectionSchemaVersion defines model for CapabilityProjection.SchemaVersion.
+type CapabilityProjectionSchemaVersion int32
+
 // CreateTaskRequest defines model for CreateTaskRequest.
 type CreateTaskRequest struct {
 	Input    map[string]interface{} `json:"input"`
@@ -140,6 +182,51 @@ type Task struct {
 
 // TaskStatus defines model for Task.Status.
 type TaskStatus string
+
+// TenantSelection defines model for TenantSelection.
+type TenantSelection struct {
+	// DisplayName Presentation-only tenant name; never used for authorization.
+	DisplayName string             `json:"display_name"`
+	TenantId    openapi_types.UUID `json:"tenant_id"`
+}
+
+// TenantSelectionList defines model for TenantSelectionList.
+type TenantSelectionList struct {
+	// Tenants Active memberships available to the authenticated user.
+	Tenants []TenantSelection `json:"tenants"`
+}
+
+// TenantIdHeader defines model for TenantIdHeader.
+type TenantIdHeader = openapi_types.UUID
+
+// AccessInternalError defines model for AccessInternalError.
+type AccessInternalError = ErrorResponse
+
+// AuthorizationUnavailable defines model for AuthorizationUnavailable.
+type AuthorizationUnavailable = ErrorResponse
+
+// InvalidTenantContext defines model for InvalidTenantContext.
+type InvalidTenantContext = ErrorResponse
+
+// TenantAccessDenied defines model for TenantAccessDenied.
+type TenantAccessDenied = ErrorResponse
+
+// UserAccessDenied defines model for UserAccessDenied.
+type UserAccessDenied = ErrorResponse
+
+// UserBearerUnauthorized defines model for UserBearerUnauthorized.
+type UserBearerUnauthorized = ErrorResponse
+
+// userBearerContextKey is the context key for userBearer security scheme
+type userBearerContextKey string
+
+// GetMyCapabilitiesParams defines parameters for GetMyCapabilities.
+type GetMyCapabilitiesParams struct {
+	// XYijieTenantID UUID of the tenant selected by the client. This is an untrusted selection
+	// hint; the API independently verifies the authenticated user, tenant, active
+	// membership, and tenant-scoped roles for every request.
+	XYijieTenantID TenantIdHeader `json:"X-Yijie-Tenant-ID"`
+}
 
 // CreateTaskJSONRequestBody defines body for CreateTask for application/json ContentType.
 type CreateTaskJSONRequestBody = CreateTaskRequest

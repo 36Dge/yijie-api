@@ -34,14 +34,38 @@ func Open(ctx context.Context, dsn string, minConns, maxConns int32) (*pgxpool.P
 }
 
 func RequireSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	var tasksTable, auditLogsTable *string
+	var tasksTable, auditLogsTable, usersTable, identitiesTable, tenantsTable, membershipsTable *string
+	var permissionsTable, rolesTable, rolePermissionsTable, membershipRolesTable *string
 	if err := pool.QueryRow(
 		ctx,
-		"SELECT to_regclass('tasks')::text, to_regclass('audit_logs')::text",
-	).Scan(&tasksTable, &auditLogsTable); err != nil {
+		`SELECT
+			to_regclass('tasks')::text,
+			to_regclass('audit_logs')::text,
+			to_regclass('users')::text,
+			to_regclass('user_identities')::text,
+			to_regclass('tenants')::text,
+			to_regclass('tenant_memberships')::text,
+			to_regclass('permissions')::text,
+			to_regclass('roles')::text,
+			to_regclass('role_permissions')::text,
+			to_regclass('membership_roles')::text`,
+	).Scan(
+		&tasksTable,
+		&auditLogsTable,
+		&usersTable,
+		&identitiesTable,
+		&tenantsTable,
+		&membershipsTable,
+		&permissionsTable,
+		&rolesTable,
+		&rolePermissionsTable,
+		&membershipRolesTable,
+	); err != nil {
 		return fmt.Errorf("check database schema: %w", err)
 	}
-	if tasksTable == nil || auditLogsTable == nil {
+	if tasksTable == nil || auditLogsTable == nil || usersTable == nil || identitiesTable == nil ||
+		tenantsTable == nil || membershipsTable == nil || permissionsTable == nil || rolesTable == nil ||
+		rolePermissionsTable == nil || membershipRolesTable == nil {
 		return errors.New("database schema is not current; run migrations before starting the API")
 	}
 	return nil

@@ -31,9 +31,15 @@ jobs:
       YIJIE_API_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: 36Dge/yijie-contracts
+          ref: 9ec34abd6e7dfb5a23b0154d467694167224ebbb
+          path: contracts-source
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      - run: make generate-check CONTRACTS_DIR=contracts-source
       - run: make lint
       - run: make migrate-up
       - run: make test

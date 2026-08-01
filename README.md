@@ -19,6 +19,24 @@ Go 业务后端，MVP 阶段采用模块化单体。
 - `goose` SQL Migration；
 - Redis 7，目前只配置本地依赖，尚未进入业务主链路。
 
+## FEAT-125 S3 foundation
+
+当前代码包含未生产激活的身份与授权基础：
+
+- contracts `9ec34abd6e7dfb5a23b0154d467694167224ebbb` exact pin 和生成漂移检查；
+- 固定 audience `https://api.yijie.ai` 的 RS256 access-JWT/JWKS verifier；
+- `(issuer, subject)` 到内部用户、活动租户 membership 和 PostgreSQL RBAC；
+- goose v2 expand migration，不创建 API session，也不写真实用户/租户。
+
+S3 不注册 capability/tenant HTTP endpoint，也没有生产 IdP issuer、client ID 或 JWKS 配置。
+缺少后续 G3/G5 配置和 S4 endpoint 时不得把这些模块视为已生产启用。
+
+从固定 contracts checkout 重生成并校验：
+
+```bash
+make generate-check CONTRACTS_DIR=../yijie-contracts
+```
+
 ## 本地开发
 
 先启动 `yijie-infra` 中的本地依赖：
