@@ -26,6 +26,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      CONTRACTS_DIR: contracts-source
       YIJIE_API_POSTGRES_DSN: postgres://yijie:yijie@localhost:5432/yijie_api?sslmode=disable
       YIJIE_API_TEST_POSTGRES_DSN: postgres://yijie:yijie@localhost:5432/yijie_api?sslmode=disable
       YIJIE_API_REDIS_URL: redis://localhost:6379/0

@@ -65,6 +65,7 @@ func TestVerifierAcceptsOnlyBoundedRS256AccessJWT(t *testing.T) {
 		claims map[string]any
 	}{
 		{name: "wrong audience", claims: claims(now, map[string]any{"aud": []string{"https://wrong.example"}})},
+		{name: "multiple audiences", claims: claims(now, map[string]any{"aud": []string{AccessTokenAudience, "https://other.example"}})},
 		{name: "wrong issuer", claims: claims(now, map[string]any{"iss": "https://wrong.example/"})},
 		{name: "expired", claims: claims(now, map[string]any{"exp": now.Add(-2 * time.Minute)})},
 		{name: "future not before", claims: claims(now, map[string]any{"nbf": now.Add(2 * time.Minute)})},

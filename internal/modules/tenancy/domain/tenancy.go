@@ -20,6 +20,16 @@ type Scope struct {
 	AuthorizationRevision int64
 }
 
+type Membership struct {
+	TenantID    uuid.UUID
+	DisplayName string
+}
+
+func (membership Membership) Valid() bool {
+	nameLength := len([]rune(membership.DisplayName))
+	return membership.TenantID != uuid.Nil && nameLength >= 1 && nameLength <= 200
+}
+
 func (scope Scope) Valid() bool {
 	return scope.UserID != uuid.Nil &&
 		scope.TenantID != uuid.Nil &&

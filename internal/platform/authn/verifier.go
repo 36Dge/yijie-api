@@ -108,7 +108,9 @@ func (verifier *Verifier) Verify(ctx context.Context, encoded string) (Identity,
 	}
 	issuer, issuerOK := token.Issuer()
 	subject, subjectOK := token.Subject()
-	if !issuerOK || !subjectOK || issuer != verifier.issuer || strings.TrimSpace(subject) == "" {
+	audiences, audienceOK := token.Audience()
+	if !issuerOK || !subjectOK || !audienceOK || issuer != verifier.issuer || strings.TrimSpace(subject) == "" ||
+		len(audiences) != 1 || audiences[0] != AccessTokenAudience {
 		return Identity{}, ErrUnauthorized
 	}
 	return Identity{Issuer: issuer, Subject: subject}, nil

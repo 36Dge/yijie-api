@@ -1,13 +1,26 @@
 package domain
 
-import "errors"
+import (
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 var (
 	ErrInvalidAuthorizationInput = errors.New("authorization input is invalid")
 	ErrUnknownPermission         = errors.New("permission is not in the approved catalog")
 	ErrDenied                    = errors.New("authorization is denied")
 	ErrAuthorizationUnavailable  = errors.New("authorization repository is unavailable")
+	ErrInvalidProjection         = errors.New("authorization projection is invalid")
 )
+
+type Projection struct {
+	TenantID              uuid.UUID
+	AuthorizationRevision int64
+	ExpiresAt             time.Time
+	Permissions           []Permission
+}
 
 type Permission string
 

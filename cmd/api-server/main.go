@@ -11,10 +11,19 @@ import (
 	"time"
 
 	"github.com/36Dge/yijie-api/internal/app"
+	"github.com/36Dge/yijie-api/internal/interfaces/publicapi"
+	authorizationapplication "github.com/36Dge/yijie-api/internal/modules/authorization/application"
+	authorizationpostgres "github.com/36Dge/yijie-api/internal/modules/authorization/infrastructure/postgres"
+	identityapplication "github.com/36Dge/yijie-api/internal/modules/identity/application"
+	identitypostgres "github.com/36Dge/yijie-api/internal/modules/identity/infrastructure/postgres"
 	"github.com/36Dge/yijie-api/internal/modules/tasks/application"
 	taskpostgres "github.com/36Dge/yijie-api/internal/modules/tasks/infrastructure/postgres"
+	tenancyapplication "github.com/36Dge/yijie-api/internal/modules/tenancy/application"
+	tenancypostgres "github.com/36Dge/yijie-api/internal/modules/tenancy/infrastructure/postgres"
+	"github.com/36Dge/yijie-api/internal/platform/authn"
 	"github.com/36Dge/yijie-api/internal/platform/database"
 	"github.com/36Dge/yijie-api/internal/platform/migrations"
+	"github.com/36Dge/yijie-api/internal/platform/observability"
 )
 
 func main() {
@@ -38,17 +47,69 @@ func main() {
 	if err == nil {
 		err = database.RequireSchema(startupContext, pool)
 	}
+	var accessHandler *publicapi.AccessHandler
+	var accessKeys *authn.RemoteKeySet
+	var cancelAccessKeys context.CancelFunc
+	if err == nil && config.PermissionProjectionEnabled {
+		accessKeysContext, cancel := context.WithCancel(context.Background())
+		cancelAccessKeys = cancel
+		accessKeys, err = authn.NewRemoteKeySet(accessKeysContext, config.AccessJWKSURL, nil)
+		if err == nil {
+			var verifier *authn.Verifier
+			verifier, err = authn.NewVerifier(config.AccessIssuer, accessKeys)
+			if err == nil {
+				accessHandler = publicapi.NewAccessHandler(
+					verifier,
+					identityapplication.New(identitypostgres.New(pool)),
+					tenancyapplication.New(tenancypostgres.New(pool)),
+					authorizationapplication.New(authorizationpostgres.New(pool)),
+					observability.NewAccessMetrics(),
+				)
+			}
+		}
+		if err != nil {
+			cancelAccessKeys()
+			cancelAccessKeys = nil
+		}
+	}
 	cancelStartup()
 	if err != nil {
-		logger.Error("database startup check failed", "error", err)
+		if accessKeys != nil {
+			closeContext, cancelClose := context.WithTimeout(context.Background(), time.Second)
+			_ = accessKeys.Close(closeContext)
+			cancelClose()
+		}
+		if cancelAccessKeys != nil {
+			cancelAccessKeys()
+		}
+		if pool != nil {
+			pool.Close()
+		}
+		logger.Error("startup check failed", "error", err)
 		os.Exit(1)
 	}
 	defer pool.Close()
+	if accessKeys != nil {
+		defer func() {
+			closeContext, cancelClose := context.WithTimeout(context.Background(), time.Second)
+			defer cancelClose()
+			if err := accessKeys.Close(closeContext); err != nil {
+				logger.Error("close access verification keys", "error", err)
+			}
+			if cancelAccessKeys != nil {
+				cancelAccessKeys()
+			}
+		}()
+	}
 
 	taskService := application.New(taskpostgres.New(pool))
+	handlerOptions := make([]app.HandlerOption, 0, 1)
+	if accessHandler != nil {
+		handlerOptions = append(handlerOptions, app.WithAccessEndpoints(accessHandler))
+	}
 	server := &http.Server{
 		Addr:              ":" + config.Port,
-		Handler:           app.NewHandler(config, pool, taskService),
+		Handler:           app.NewHandler(config, pool, taskService, handlerOptions...),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

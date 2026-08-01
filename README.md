@@ -19,17 +19,24 @@ Go 业务后端，MVP 阶段采用模块化单体。
 - `goose` SQL Migration；
 - Redis 7，目前只配置本地依赖，尚未进入业务主链路。
 
-## FEAT-125 S3 foundation
+## FEAT-125 权威权限投影候选
 
-当前代码包含未生产激活的身份与授权基础：
+当前代码包含未生产激活的身份、租户与授权候选：
 
 - contracts `9ec34abd6e7dfb5a23b0154d467694167224ebbb` exact pin 和生成漂移检查；
 - 固定 audience `https://api.yijie.ai` 的 RS256 access-JWT/JWKS verifier；
 - `(issuer, subject)` 到内部用户、活动租户 membership 和 PostgreSQL RBAC；
 - goose v2 expand migration，不创建 API session，也不写真实用户/租户。
+- 默认关闭的 `GET /v1/me/tenants` 与 `GET /v1/me/capabilities`；
+- 逐请求 bearer、内部用户、active membership/tenant 校验，以及一次一致性读取形成的
+  allow-only capability projection；
+- canonical contract fixture producer conformance、稳定错误矩阵和有界标签的进程内
+  projection metrics recorder。Exporter、dashboard 与告警仍属于 G5。
 
-S3 不注册 capability/tenant HTTP endpoint，也没有生产 IdP issuer、client ID 或 JWKS 配置。
-缺少后续 G3/G5 配置和 S4 endpoint 时不得把这些模块视为已生产启用。
+`YIJIE_API_PERMISSION_PROJECTION_ENABLED` 默认是 `false`，因此服务不会注册两个 access
+endpoint。只有显式开启时才要求同时提供 `YIJIE_API_ACCESS_ISSUER` 与
+`YIJIE_API_ACCESS_JWKS_URL`；仓库没有任何生产 IdP、issuer、client ID 或 JWKS 值。
+缺少后续 G3/G5 配置、staging 验证和发布批准时不得把这些模块视为生产启用。
 
 从固定 contracts checkout 重生成并校验：
 

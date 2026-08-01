@@ -83,7 +83,36 @@ func TestAuthoritativeIdentityTenantAndRBACMatrix(t *testing.T) {
 					t.Errorf("permission %q: expected deny, got %v", permission, err)
 				}
 			}
+			projection, err := authorization.Project(ctx, entry.userID, entry.tenant)
+			if err != nil {
+				t.Fatalf("project permissions: %v", err)
+			}
+			if projection.TenantID != entry.tenant || projection.AuthorizationRevision < 1 {
+				t.Fatalf("unexpected projection context: %#v", projection)
+			}
+			expectedProjection := make([]domain.Permission, 0, len(entry.allowed))
+			for _, permission := range domain.InitialPermissions() {
+				if entry.allowed[permission] {
+					expectedProjection = append(expectedProjection, permission)
+				}
+			}
+			if len(projection.Permissions) != len(expectedProjection) {
+				t.Fatalf("expected projection %v, got %v", expectedProjection, projection.Permissions)
+			}
+			for index := range expectedProjection {
+				if projection.Permissions[index] != expectedProjection[index] {
+					t.Fatalf("expected projection %v, got %v", expectedProjection, projection.Permissions)
+				}
+			}
 		})
+	}
+
+	memberships, err := tenancies.ListActive(ctx, fixture.ownerID)
+	if err != nil {
+		t.Fatalf("list owner memberships: %v", err)
+	}
+	if len(memberships) != 2 || memberships[0].TenantID != fixture.tenantA || memberships[1].TenantID != fixture.tenantB {
+		t.Fatalf("unexpected owner memberships: %#v", memberships)
 	}
 
 	ownerScope, err := tenancies.VerifyActive(ctx, fixture.ownerID, fixture.tenantA)
