@@ -69,6 +69,20 @@ func TestExpandMigrationPreservesExistingDataAndTenantIsolation(t *testing.T) {
 	if taskCount != 1 || auditCount != 1 {
 		t.Fatalf("existing data was not retained: tasks=%d audits=%d", taskCount, auditCount)
 	}
+	var legacyOwner *uuid.UUID
+	if err := db.QueryRowContext(ctx, "SELECT created_by_user_id FROM tasks WHERE id = $1", taskID).Scan(&legacyOwner); err != nil {
+		t.Fatalf("read legacy task owner after secure expansion: %v", err)
+	}
+	if legacyOwner != nil {
+		t.Fatalf("legacy task was assigned an owner by guess: %v", *legacyOwner)
+	}
+	var secureIndex, idempotencyTable *string
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass('tasks_creator_private_v2_idx')::text, to_regclass('task_create_idempotency')::text`).Scan(&secureIndex, &idempotencyTable); err != nil {
+		t.Fatalf("inspect secure task expansion: %v", err)
+	}
+	if secureIndex == nil || idempotencyTable == nil {
+		t.Fatalf("secure task migration is incomplete: index=%v idempotency=%v", secureIndex, idempotencyTable)
+	}
 
 	rows, err := db.QueryContext(ctx, "SELECT permission_key FROM permissions ORDER BY permission_key")
 	if err != nil {

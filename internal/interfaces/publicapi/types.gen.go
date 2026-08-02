@@ -81,25 +81,52 @@ func (e ServiceStatusStatus) Valid() bool {
 
 // Defines values for TaskStatus.
 const (
-	Completed       TaskStatus = "completed"
-	Draft           TaskStatus = "draft"
-	Failed          TaskStatus = "failed"
-	Running         TaskStatus = "running"
-	WaitingApproval TaskStatus = "waiting_approval"
+	TaskStatusCompleted       TaskStatus = "completed"
+	TaskStatusDraft           TaskStatus = "draft"
+	TaskStatusFailed          TaskStatus = "failed"
+	TaskStatusRunning         TaskStatus = "running"
+	TaskStatusWaitingApproval TaskStatus = "waiting_approval"
 )
 
 // Valid indicates whether the value is a known member of the TaskStatus enum.
 func (e TaskStatus) Valid() bool {
 	switch e {
-	case Completed:
+	case TaskStatusCompleted:
 		return true
-	case Draft:
+	case TaskStatusDraft:
 		return true
-	case Failed:
+	case TaskStatusFailed:
 		return true
-	case Running:
+	case TaskStatusRunning:
 		return true
-	case WaitingApproval:
+	case TaskStatusWaitingApproval:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskV2Status.
+const (
+	TaskV2StatusCompleted       TaskV2Status = "completed"
+	TaskV2StatusDraft           TaskV2Status = "draft"
+	TaskV2StatusFailed          TaskV2Status = "failed"
+	TaskV2StatusRunning         TaskV2Status = "running"
+	TaskV2StatusWaitingApproval TaskV2Status = "waiting_approval"
+)
+
+// Valid indicates whether the value is a known member of the TaskV2Status enum.
+func (e TaskV2Status) Valid() bool {
+	switch e {
+	case TaskV2StatusCompleted:
+		return true
+	case TaskV2StatusDraft:
+		return true
+	case TaskV2StatusFailed:
+		return true
+	case TaskV2StatusRunning:
+		return true
+	case TaskV2StatusWaitingApproval:
 		return true
 	default:
 		return false
@@ -134,6 +161,14 @@ type CreateTaskRequest struct {
 	Input    map[string]interface{} `json:"input"`
 	TaskType string                 `json:"task_type"`
 	TenantId openapi_types.UUID     `json:"tenant_id"`
+	Title    string                 `json:"title"`
+}
+
+// CreateTaskV2Request defines model for CreateTaskV2Request.
+type CreateTaskV2Request struct {
+	// Input Task-type-specific input. Identity, tenant, ownership, and authorization fields are forbidden.
+	Input    map[string]interface{} `json:"input"`
+	TaskType string                 `json:"task_type"`
 	Title    string                 `json:"title"`
 }
 
@@ -183,6 +218,28 @@ type Task struct {
 // TaskStatus defines model for Task.Status.
 type TaskStatus string
 
+// TaskV2 defines model for TaskV2.
+type TaskV2 struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreatedByUserId Server-derived internal creator identifier; never accepted from clients.
+	CreatedByUserId openapi_types.UUID      `json:"created_by_user_id"`
+	ErrorMessage    *string                 `json:"error_message,omitempty"`
+	Id              openapi_types.UUID      `json:"id"`
+	Input           map[string]interface{}  `json:"input"`
+	Result          *map[string]interface{} `json:"result,omitempty"`
+	Status          TaskV2Status            `json:"status"`
+	TaskType        string                  `json:"task_type"`
+
+	// TenantId Verified tenant context; never an authorization credential.
+	TenantId  openapi_types.UUID `json:"tenant_id"`
+	Title     string             `json:"title"`
+	UpdatedAt time.Time          `json:"updated_at"`
+}
+
+// TaskV2Status defines model for TaskV2.Status.
+type TaskV2Status string
+
 // TenantSelection defines model for TenantSelection.
 type TenantSelection struct {
 	// DisplayName Presentation-only tenant name; never used for authorization.
@@ -196,6 +253,12 @@ type TenantSelectionList struct {
 	Tenants []TenantSelection `json:"tenants"`
 }
 
+// IdempotencyKeyHeader defines model for IdempotencyKeyHeader.
+type IdempotencyKeyHeader = openapi_types.UUID
+
+// TaskV2Id defines model for TaskV2Id.
+type TaskV2Id = openapi_types.UUID
+
 // TenantIdHeader defines model for TenantIdHeader.
 type TenantIdHeader = openapi_types.UUID
 
@@ -207,6 +270,24 @@ type AuthorizationUnavailable = ErrorResponse
 
 // InvalidTenantContext defines model for InvalidTenantContext.
 type InvalidTenantContext = ErrorResponse
+
+// TaskV2AccessDenied defines model for TaskV2AccessDenied.
+type TaskV2AccessDenied = ErrorResponse
+
+// TaskV2BadRequest defines model for TaskV2BadRequest.
+type TaskV2BadRequest = ErrorResponse
+
+// TaskV2IdempotencyConflict defines model for TaskV2IdempotencyConflict.
+type TaskV2IdempotencyConflict = ErrorResponse
+
+// TaskV2InternalError defines model for TaskV2InternalError.
+type TaskV2InternalError = ErrorResponse
+
+// TaskV2NotFound defines model for TaskV2NotFound.
+type TaskV2NotFound = ErrorResponse
+
+// TaskV2Unauthenticated defines model for TaskV2Unauthenticated.
+type TaskV2Unauthenticated = ErrorResponse
 
 // TenantAccessDenied defines model for TenantAccessDenied.
 type TenantAccessDenied = ErrorResponse
@@ -228,5 +309,29 @@ type GetMyCapabilitiesParams struct {
 	XYijieTenantID TenantIdHeader `json:"X-Yijie-Tenant-ID"`
 }
 
+// CreateTaskV2Params defines parameters for CreateTaskV2.
+type CreateTaskV2Params struct {
+	// XYijieTenantID UUID of the tenant selected by the client. This is an untrusted selection
+	// hint; the API independently verifies the authenticated user, tenant, active
+	// membership, and tenant-scoped roles for every request.
+	XYijieTenantID TenantIdHeader `json:"X-Yijie-Tenant-ID"`
+
+	// IdempotencyKey Client-generated UUID that identifies one create intent. Retries of an unknown
+	// network result reuse the same key and request. A key is scoped to the verified
+	// internal user, tenant, operation, and bounded provider retention window.
+	IdempotencyKey IdempotencyKeyHeader `json:"Idempotency-Key"`
+}
+
+// GetTaskV2Params defines parameters for GetTaskV2.
+type GetTaskV2Params struct {
+	// XYijieTenantID UUID of the tenant selected by the client. This is an untrusted selection
+	// hint; the API independently verifies the authenticated user, tenant, active
+	// membership, and tenant-scoped roles for every request.
+	XYijieTenantID TenantIdHeader `json:"X-Yijie-Tenant-ID"`
+}
+
 // CreateTaskJSONRequestBody defines body for CreateTask for application/json ContentType.
 type CreateTaskJSONRequestBody = CreateTaskRequest
+
+// CreateTaskV2JSONRequestBody defines body for CreateTaskV2 for application/json ContentType.
+type CreateTaskV2JSONRequestBody = CreateTaskV2Request

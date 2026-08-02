@@ -34,6 +34,7 @@ type Config struct {
 	DatabaseMinConns            int32
 	DatabaseMaxConns            int32
 	PermissionProjectionEnabled bool
+	SecureTasksEnabled          bool
 	AccessIssuer                string
 	AccessJWKSURL               string
 	LocalCAPEMPath              string
@@ -49,10 +50,22 @@ type AccessEndpoints interface {
 	GetMyCapabilities(http.ResponseWriter, *http.Request)
 }
 
+type SecureTaskEndpoints interface {
+	CreateTask(http.ResponseWriter, *http.Request)
+	GetTask(http.ResponseWriter, *http.Request)
+}
+
 type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
-	access AccessEndpoints
+	access      AccessEndpoints
+	secureTasks SecureTaskEndpoints
+}
+
+func WithSecureTaskEndpoints(tasks SecureTaskEndpoints) HandlerOption {
+	return func(options *handlerOptions) {
+		options.secureTasks = tasks
+	}
 }
 
 func WithAccessEndpoints(access AccessEndpoints) HandlerOption {
@@ -77,6 +90,10 @@ func LoadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	secureTasksEnabled, err := boolEnv("YIJIE_API_SECURE_TASKS_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
 
 	environment := env("YIJIE_ENV", "local")
 	serviceProfile := env("YIJIE_API_SERVICE_PROFILE", ServiceProfileDefault)
@@ -96,6 +113,7 @@ func LoadConfig() (Config, error) {
 		DatabaseMinConns:            minConns,
 		DatabaseMaxConns:            maxConns,
 		PermissionProjectionEnabled: projectionEnabled,
+		SecureTasksEnabled:          secureTasksEnabled,
 		AccessIssuer:                strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_ISSUER")),
 		AccessJWKSURL:               strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_JWKS_URL")),
 		LocalCAPEMPath:              strings.TrimSpace(os.Getenv("YIJIE_API_LOCAL_CA_PEM_PATH")),
@@ -106,6 +124,9 @@ func LoadConfig() (Config, error) {
 	}
 	if config.PermissionProjectionEnabled && (config.AccessIssuer == "" || config.AccessJWKSURL == "") {
 		return Config{}, errors.New("enabled permission projection requires YIJIE_API_ACCESS_ISSUER and YIJIE_API_ACCESS_JWKS_URL")
+	}
+	if config.SecureTasksEnabled && (!config.PermissionProjectionEnabled || config.ServiceProfile != ServiceProfileFeat125LocalLab) {
+		return Config{}, errors.New("secure tasks require enabled permission projection in the feat-125-local-lab service profile")
 	}
 	localCAConfigured := config.LocalCAPEMPath != "" || config.LocalCASHA256 != ""
 	if serviceProfile != ServiceProfileFeat125LocalLab && localCAConfigured {
@@ -151,6 +172,10 @@ func NewHandler(config Config, database Database, tasks *application.Service, op
 	if settings.access != nil {
 		mux.HandleFunc("GET /v1/me/tenants", settings.access.ListMyTenants)
 		mux.HandleFunc("GET /v1/me/capabilities", settings.access.GetMyCapabilities)
+	}
+	if config.SecureTasksEnabled && settings.secureTasks != nil {
+		mux.HandleFunc("POST /v2/tasks", settings.secureTasks.CreateTask)
+		mux.HandleFunc("GET /v2/tasks/{task_id}", settings.secureTasks.GetTask)
 	}
 
 	if config.ServiceProfile != ServiceProfileFeat125LocalLab {

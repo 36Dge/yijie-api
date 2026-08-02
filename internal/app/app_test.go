@@ -14,6 +14,21 @@ type fakeAccessEndpoints struct {
 	capabilitiesCalls int
 }
 
+type fakeSecureTaskEndpoints struct {
+	createCalls int
+	getCalls    int
+}
+
+func (endpoints *fakeSecureTaskEndpoints) CreateTask(w http.ResponseWriter, _ *http.Request) {
+	endpoints.createCalls++
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (endpoints *fakeSecureTaskEndpoints) GetTask(w http.ResponseWriter, _ *http.Request) {
+	endpoints.getCalls++
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (endpoints *fakeAccessEndpoints) ListMyTenants(w http.ResponseWriter, _ *http.Request) {
 	endpoints.tenantsCalls++
 	w.WriteHeader(http.StatusNoContent)
@@ -120,6 +135,61 @@ func TestFeat125LocalLabProfileDoesNotRegisterLegacyTasks(t *testing.T) {
 			)
 			if localLabResponse.Code != http.StatusNotFound {
 				t.Fatalf("local-lab profile must not register %s %s: got %d", test.method, test.path, localLabResponse.Code)
+			}
+		})
+	}
+}
+
+func TestSecureTasksRequireFlagAndExplicitWiring(t *testing.T) {
+	endpoints := &fakeSecureTaskEndpoints{}
+	for _, config := range []Config{
+		{Environment: "local", ServiceProfile: ServiceProfileFeat125LocalLab},
+		{Environment: "local", ServiceProfile: ServiceProfileFeat125LocalLab, SecureTasksEnabled: true},
+	} {
+		handler := NewHandler(config, fakeDatabase{}, nil, WithSecureTaskEndpoints(endpoints))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v2/tasks", strings.NewReader(`{}`)))
+		if !config.SecureTasksEnabled && response.Code != http.StatusNotFound {
+			t.Fatalf("disabled secure task route returned %d", response.Code)
+		}
+		if config.SecureTasksEnabled && response.Code != http.StatusNoContent {
+			t.Fatalf("enabled secure task route returned %d", response.Code)
+		}
+	}
+	if endpoints.createCalls != 1 {
+		t.Fatalf("secure task endpoint call count = %d", endpoints.createCalls)
+	}
+}
+
+func TestSecureTasksConfigurationFailsClosedOutsidePinnedLocalProfile(t *testing.T) {
+	const validPin = "07a3bb2ef51a5b559fe42b423339f6c886c5e17903b1cf2d8ca26bf1b5574650"
+	setValid := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("YIJIE_ENV", "local")
+		t.Setenv("YIJIE_API_POSTGRES_DSN", "postgres://synthetic.invalid/yijie")
+		t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileFeat125LocalLab)
+		t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "true")
+		t.Setenv("YIJIE_API_SECURE_TASKS_ENABLED", "true")
+		t.Setenv("YIJIE_API_ACCESS_ISSUER", Feat125LocalLabIssuer)
+		t.Setenv("YIJIE_API_ACCESS_JWKS_URL", Feat125LocalLabJWKSURL)
+		t.Setenv("YIJIE_API_LOCAL_CA_PEM_PATH", "/tmp/feat-125-local-ca.pem")
+		t.Setenv("YIJIE_API_LOCAL_CA_SHA256", validPin)
+	}
+	setValid(t)
+	config, err := LoadConfig()
+	if err != nil || !config.SecureTasksEnabled {
+		t.Fatalf("load local secure tasks: config=%#v err=%v", config, err)
+	}
+	for name, change := range map[string]func(*testing.T){
+		"default profile":     func(t *testing.T) { t.Setenv("YIJIE_API_SERVICE_PROFILE", ServiceProfileDefault) },
+		"projection disabled": func(t *testing.T) { t.Setenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED", "false") },
+		"production":          func(t *testing.T) { t.Setenv("YIJIE_ENV", "production") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			setValid(t)
+			change(t)
+			if _, err := LoadConfig(); err == nil {
+				t.Fatal("expected secure tasks configuration to fail closed")
 			}
 		})
 	}

@@ -57,6 +57,7 @@ func main() {
 		err = database.RequireSchema(startupContext, pool)
 	}
 	var accessHandler *publicapi.AccessHandler
+	var secureTaskHandler *publicapi.SecureTaskHandler
 	var accessKeys *authn.RemoteKeySet
 	var cancelAccessKeys context.CancelFunc
 	if err == nil && config.PermissionProjectionEnabled {
@@ -67,13 +68,24 @@ func main() {
 			var verifier *authn.Verifier
 			verifier, err = authn.NewVerifier(config.AccessIssuer, accessKeys)
 			if err == nil {
+				identityService := identityapplication.New(identitypostgres.New(pool))
+				tenancyService := tenancyapplication.New(tenancypostgres.New(pool))
+				authorizationService := authorizationapplication.New(authorizationpostgres.New(pool))
 				accessHandler = publicapi.NewAccessHandler(
 					verifier,
-					identityapplication.New(identitypostgres.New(pool)),
-					tenancyapplication.New(tenancypostgres.New(pool)),
-					authorizationapplication.New(authorizationpostgres.New(pool)),
+					identityService,
+					tenancyService,
+					authorizationService,
 					observability.NewAccessMetrics(),
 				)
+				if config.SecureTasksEnabled {
+					secureTaskHandler = publicapi.NewSecureTaskHandler(
+						accessHandler,
+						tenancyService,
+						authorizationService,
+						application.NewSecure(taskpostgres.New(pool)),
+					)
+				}
 			}
 		}
 		if err != nil {
@@ -115,6 +127,9 @@ func main() {
 	handlerOptions := make([]app.HandlerOption, 0, 1)
 	if accessHandler != nil {
 		handlerOptions = append(handlerOptions, app.WithAccessEndpoints(accessHandler))
+	}
+	if secureTaskHandler != nil {
+		handlerOptions = append(handlerOptions, app.WithSecureTaskEndpoints(secureTaskHandler))
 	}
 	server := &http.Server{
 		Addr:              app.ServerAddress(config),

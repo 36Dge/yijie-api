@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"strings"
@@ -18,6 +19,60 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestSecureRepositoryEnforcesCreatorScopeAndIdempotency(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, _, cleanup := integrationDatabase(t, ctx)
+	defer cleanup()
+
+	tenantID := uuid.New()
+	creatorID := uuid.New()
+	otherUserID := uuid.New()
+	if _, err := pool.Exec(ctx, "INSERT INTO users (id) VALUES ($1), ($2)", creatorID, otherUserID); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO tenants (id, name) VALUES ($1, 'Synthetic tenant')", tenantID); err != nil {
+		t.Fatalf("seed tenant: %v", err)
+	}
+
+	repository := New(pool)
+	command := domain.CreateSecureTask{
+		SecureScope: domain.SecureScope{TenantID: tenantID.String(), UserID: creatorID.String()},
+		TaskType:    "conversation", Title: "Synthetic task", Input: []byte(`{"text":"hello"}`),
+		IdempotencyKey: uuid.NewString(), CanonicalSHA256: strings.Repeat("a", 64),
+		RequestID: "request-secure-1", TraceID: "trace-secure-1",
+	}
+	created, err := repository.CreateSecure(ctx, command)
+	if err != nil {
+		t.Fatalf("create secure task: %v", err)
+	}
+	replayed, err := repository.CreateSecure(ctx, command)
+	if err != nil || replayed.ID != created.ID {
+		t.Fatalf("idempotent replay: task=%#v err=%v", replayed, err)
+	}
+	conflict := command
+	conflict.CanonicalSHA256 = strings.Repeat("b", 64)
+	if _, err := repository.CreateSecure(ctx, conflict); !errors.Is(err, domain.ErrIdempotencyConflict) {
+		t.Fatalf("expected idempotency conflict, got %v", err)
+	}
+	if _, err := repository.GetSecure(ctx, domain.SecureScope{TenantID: tenantID.String(), UserID: otherUserID.String()}, created.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("cross-creator read must be hidden as not found, got %v", err)
+	}
+	var taskCount, auditCount, idempotencyCount int
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM tasks WHERE id = $1", created.ID).Scan(&taskCount); err != nil {
+		t.Fatalf("count secure tasks: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM audit_logs WHERE resource_id = $1 AND actor_id = $2", created.ID, creatorID.String()).Scan(&auditCount); err != nil {
+		t.Fatalf("count secure task audits: %v", err)
+	}
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM task_create_idempotency WHERE task_id = $1", created.ID).Scan(&idempotencyCount); err != nil {
+		t.Fatalf("count idempotency records: %v", err)
+	}
+	if taskCount != 1 || auditCount != 1 || idempotencyCount != 1 {
+		t.Fatalf("unexpected atomic counts: tasks=%d audits=%d idempotency=%d", taskCount, auditCount, idempotencyCount)
+	}
+}
+
 func TestRepositoryPersistsTaskAndAuditAtomically(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -25,8 +80,12 @@ func TestRepositoryPersistsTaskAndAuditAtomically(t *testing.T) {
 	defer cleanup()
 
 	repository := New(pool)
+	tenantID := "9d1e1888-7ecf-42f6-8cbf-4d24101a801c"
+	if _, err := pool.Exec(ctx, "INSERT INTO tenants (id, name) VALUES ($1, 'Synthetic legacy tenant')", tenantID); err != nil {
+		t.Fatalf("seed legacy tenant: %v", err)
+	}
 	command := domain.CreateTask{
-		TenantID:  "9d1e1888-7ecf-42f6-8cbf-4d24101a801c",
+		TenantID:  tenantID,
 		TaskType:  "listing_diagnosis",
 		Title:     "Product review",
 		Input:     []byte(`{"url":"https://example.com/product"}`),
