@@ -20,6 +20,7 @@ const secureTaskMaxRequestBodyBytes = 1 << 20
 type SecureTaskService interface {
 	Create(context.Context, taskdomain.CreateSecureTask) (taskdomain.Task, error)
 	Get(context.Context, taskdomain.SecureScope, string) (taskdomain.Task, error)
+	RecordAudit(context.Context, taskdomain.SecureTaskAudit) error
 }
 
 type ActiveTenantVerifier interface {
@@ -47,63 +48,78 @@ func NewSecureTaskHandler(
 }
 
 func (handler *SecureTaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
+	audit := newSecureTaskAudit(r, "task.create")
 	principal, scope, failure := handler.authorize(r, authorizationdomain.TaskCreate)
+	bindSecureTaskAudit(&audit, principal, scope)
 	if failure != nil {
-		writeSecureTaskFailure(w, *failure)
+		handler.writeFailure(w, r, audit, *failure)
 		return
 	}
 	idempotencyKey, err := parseRequiredUUIDHeader(r.Header.Values("Idempotency-Key"))
 	if err != nil {
-		writeSecureTaskFailure(w, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request", message: "idempotency key is missing or invalid"})
+		handler.writeFailure(w, r, audit, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request"})
 		return
 	}
 	var body CreateTaskV2Request
 	if err := decodeSecureTaskJSON(w, r, &body); err != nil {
-		writeSecureTaskFailure(w, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request", message: "request body must match the create task contract"})
+		handler.writeFailure(w, r, audit, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request"})
+		return
+	}
+	if !body.TaskType.Valid() || !body.Input.ContentMode.Valid() || !body.Input.SchemaVersion.Valid() || body.Input.ClientReferenceId == uuid.Nil {
+		handler.writeFailure(w, r, audit, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request"})
 		return
 	}
 	input, err := json.Marshal(body.Input)
 	if err != nil {
-		writeSecureTaskFailure(w, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request", message: "input must be a JSON object"})
+		handler.writeFailure(w, r, audit, secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request"})
 		return
 	}
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if requestID == "" {
-		requestID = idempotencyKey.String()
-	}
+	audit.RequestID = idempotencyKey.String()
 	task, err := handler.tasks.Create(r.Context(), taskdomain.CreateSecureTask{
 		SecureScope: taskdomain.SecureScope{TenantID: scope.TenantID.String(), UserID: principal.UserID.String()},
-		TaskType:    body.TaskType, Title: body.Title, Input: input,
-		IdempotencyKey: idempotencyKey.String(), RequestID: requestID,
-		TraceID: strings.TrimSpace(r.Header.Get("X-Trace-ID")),
+		TaskType:    string(body.TaskType), Input: input,
+		IdempotencyKey: idempotencyKey.String(), RequestID: audit.RequestID,
+		TraceID: audit.TraceID,
 	})
 	if err != nil {
-		writeSecureTaskFailure(w, mapSecureTaskServiceFailure(err))
+		handler.writeFailure(w, r, audit, mapSecureTaskServiceFailure(err))
 		return
 	}
 	response, err := toTaskV2(task)
 	if err != nil {
-		writeSecureTaskFailure(w, internalSecureTaskFailure())
+		handler.writeFailure(w, r, audit, internalSecureTaskFailure())
 		return
 	}
 	writeSecureTaskJSON(w, http.StatusCreated, response)
 }
 
 func (handler *SecureTaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
+	audit := newSecureTaskAudit(r, "task.read")
 	principal, scope, failure := handler.authorize(r, authorizationdomain.TaskRead)
+	bindSecureTaskAudit(&audit, principal, scope)
+	if parsed, err := uuid.Parse(r.PathValue("task_id")); err == nil && parsed != uuid.Nil {
+		audit.TaskID = parsed.String()
+	}
 	if failure != nil {
-		writeSecureTaskFailure(w, *failure)
+		handler.writeFailure(w, r, audit, *failure)
 		return
 	}
 	task, err := handler.tasks.Get(r.Context(), taskdomain.SecureScope{
 		TenantID: scope.TenantID.String(), UserID: principal.UserID.String(),
 	}, r.PathValue("task_id"))
 	if err != nil {
-		writeSecureTaskFailure(w, mapSecureTaskServiceFailure(err))
+		handler.writeFailure(w, r, audit, mapSecureTaskServiceFailure(err))
 		return
 	}
 	response, err := toTaskV2(task)
 	if err != nil {
+		handler.writeFailure(w, r, audit, internalSecureTaskFailure())
+		return
+	}
+	audit.Outcome = "success"
+	audit.Code = "success"
+	audit.StatusCode = http.StatusOK
+	if err := handler.tasks.RecordAudit(r.Context(), audit); err != nil {
 		writeSecureTaskFailure(w, internalSecureTaskFailure())
 		return
 	}
@@ -122,20 +138,23 @@ func (handler *SecureTaskHandler) authorize(r *http.Request, permission authoriz
 	}
 	tenantID, err := parseTenantHeader(r.Header.Values("X-Yijie-Tenant-ID"))
 	if err != nil {
-		failure := secureTaskFailure{status: http.StatusBadRequest, code: "invalid_tenant_context", message: "tenant selection is missing or invalid"}
-		return identitydomain.Principal{}, tenancydomain.Scope{}, &failure
+		failure := secureTaskFailure{status: http.StatusBadRequest, code: "invalid_tenant_context"}
+		return principal, tenancydomain.Scope{}, &failure
 	}
 	scope, err := handler.tenants.VerifyActive(r.Context(), principal.UserID, tenantID)
 	switch {
 	case errors.Is(err, tenancydomain.ErrTenantAccessDenied):
 		failure := accessDeniedSecureTaskFailure()
-		return identitydomain.Principal{}, tenancydomain.Scope{}, &failure
+		return principal, tenancydomain.Scope{}, &failure
 	case errors.Is(err, tenancydomain.ErrTenancyUnavailable):
 		failure := unavailableSecureTaskFailure()
-		return identitydomain.Principal{}, tenancydomain.Scope{}, &failure
-	case err != nil || !scope.Valid() || scope.UserID != principal.UserID || scope.TenantID != tenantID:
-		failure := internalSecureTaskFailure()
-		return identitydomain.Principal{}, tenancydomain.Scope{}, &failure
+		return principal, tenancydomain.Scope{}, &failure
+	case err != nil:
+		failure := unavailableSecureTaskFailure()
+		return principal, tenancydomain.Scope{}, &failure
+	case !scope.Valid() || scope.UserID != principal.UserID || scope.TenantID != tenantID:
+		failure := accessDeniedSecureTaskFailure()
+		return principal, tenancydomain.Scope{}, &failure
 	}
 	if err := handler.permissions.Check(r.Context(), scope, permission); err != nil {
 		var failure secureTaskFailure
@@ -146,7 +165,7 @@ func (handler *SecureTaskHandler) authorize(r *http.Request, permission authoriz
 		} else {
 			failure = internalSecureTaskFailure()
 		}
-		return identitydomain.Principal{}, tenancydomain.Scope{}, &failure
+		return principal, scope, &failure
 	}
 	return principal, scope, nil
 }
@@ -164,22 +183,24 @@ func toTaskV2(task taskdomain.Task) (TaskV2, error) {
 	if err != nil {
 		return TaskV2{}, err
 	}
-	var input map[string]any
-	if err := json.Unmarshal(task.Input, &input); err != nil {
+	var input TaskContentReferenceV2
+	decoder := json.NewDecoder(strings.NewReader(string(task.Input)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
 		return TaskV2{}, err
 	}
-	var result *map[string]any
-	if len(task.Result) > 0 {
-		value := make(map[string]any)
-		if err := json.Unmarshal(task.Result, &value); err != nil {
-			return TaskV2{}, err
-		}
-		result = &value
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return TaskV2{}, errors.New("secure task input contains trailing data")
+	}
+	taskType := TaskV2TaskType(task.TaskType)
+	status := TaskV2Status(task.Status)
+	if !input.ContentMode.Valid() || !input.SchemaVersion.Valid() || input.ClientReferenceId == uuid.Nil || !taskType.Valid() || !status.Valid() {
+		return TaskV2{}, errors.New("secure task contains invalid content-free metadata")
 	}
 	return TaskV2{
 		Id: id, TenantId: tenantID, CreatedByUserId: createdBy,
-		TaskType: task.TaskType, Title: task.Title, Status: TaskV2Status(task.Status),
-		Input: input, Result: result, ErrorMessage: task.ErrorMessage,
+		TaskType: taskType, Status: status,
+		Input:     input,
 		CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
 	}, nil
 }
@@ -211,7 +232,6 @@ func decodeSecureTaskJSON(w http.ResponseWriter, r *http.Request, destination an
 type secureTaskFailure struct {
 	status     int
 	code       string
-	message    string
 	challenge  bool
 	retryAfter bool
 }
@@ -219,7 +239,7 @@ type secureTaskFailure struct {
 func mapAccessToSecureTaskFailure(failure accessFailure) secureTaskFailure {
 	switch failure.status {
 	case http.StatusUnauthorized:
-		return secureTaskFailure{status: http.StatusUnauthorized, code: "unauthenticated", message: "valid bearer authentication is required", challenge: true}
+		return secureTaskFailure{status: http.StatusUnauthorized, code: "unauthenticated", challenge: true}
 	case http.StatusForbidden:
 		return accessDeniedSecureTaskFailure()
 	case http.StatusServiceUnavailable:
@@ -232,26 +252,26 @@ func mapAccessToSecureTaskFailure(failure accessFailure) secureTaskFailure {
 func mapSecureTaskServiceFailure(err error) secureTaskFailure {
 	switch {
 	case errors.Is(err, taskdomain.ErrInvalid):
-		return secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request", message: "request parameters are invalid"}
+		return secureTaskFailure{status: http.StatusBadRequest, code: "invalid_request"}
 	case errors.Is(err, taskdomain.ErrIdempotencyConflict):
-		return secureTaskFailure{status: http.StatusConflict, code: "idempotency_conflict", message: "idempotency key conflicts with an existing request"}
+		return secureTaskFailure{status: http.StatusConflict, code: "idempotency_conflict"}
 	case errors.Is(err, taskdomain.ErrNotFound):
-		return secureTaskFailure{status: http.StatusNotFound, code: "task_not_found", message: "task was not found"}
+		return secureTaskFailure{status: http.StatusNotFound, code: "task_not_found"}
 	default:
 		return internalSecureTaskFailure()
 	}
 }
 
 func accessDeniedSecureTaskFailure() secureTaskFailure {
-	return secureTaskFailure{status: http.StatusForbidden, code: "access_denied", message: "task access is denied"}
+	return secureTaskFailure{status: http.StatusForbidden, code: "access_denied"}
 }
 
 func unavailableSecureTaskFailure() secureTaskFailure {
-	return secureTaskFailure{status: http.StatusServiceUnavailable, code: "authorization_unavailable", message: "authorization dependencies are unavailable", retryAfter: true}
+	return secureTaskFailure{status: http.StatusServiceUnavailable, code: "authorization_unavailable", retryAfter: true}
 }
 
 func internalSecureTaskFailure() secureTaskFailure {
-	return secureTaskFailure{status: http.StatusInternalServerError, code: "internal_error", message: "task operation failed"}
+	return secureTaskFailure{status: http.StatusInternalServerError, code: "internal_error"}
 }
 
 func writeSecureTaskFailure(w http.ResponseWriter, failure secureTaskFailure) {
@@ -261,7 +281,46 @@ func writeSecureTaskFailure(w http.ResponseWriter, failure secureTaskFailure) {
 	if failure.retryAfter {
 		w.Header().Set("Retry-After", "1")
 	}
-	writeSecureTaskJSON(w, failure.status, ErrorResponse{Code: failure.code, Message: failure.message})
+	writeSecureTaskJSON(w, failure.status, TaskV2ErrorResponse{Code: TaskV2ErrorResponseCode(failure.code)})
+}
+
+func newSecureTaskAudit(r *http.Request, operation string) taskdomain.SecureTaskAudit {
+	requestID := contentFreeUUIDHeader(r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+	return taskdomain.SecureTaskAudit{
+		Operation: operation,
+		RequestID: requestID,
+		TraceID:   contentFreeUUIDHeader(r.Header.Get("X-Trace-ID")),
+	}
+}
+
+func contentFreeUUIDHeader(value string) string {
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || !strings.EqualFold(value, parsed.String()) {
+		return ""
+	}
+	return parsed.String()
+}
+
+func bindSecureTaskAudit(audit *taskdomain.SecureTaskAudit, principal identitydomain.Principal, scope tenancydomain.Scope) {
+	if principal.UserID != uuid.Nil {
+		audit.UserID = principal.UserID.String()
+	}
+	if scope.Valid() && scope.UserID == principal.UserID {
+		audit.TenantID = scope.TenantID.String()
+	}
+}
+
+func (handler *SecureTaskHandler) writeFailure(w http.ResponseWriter, r *http.Request, audit taskdomain.SecureTaskAudit, failure secureTaskFailure) {
+	audit.Outcome = "failure"
+	audit.Code = failure.code
+	audit.StatusCode = failure.status
+	if handler != nil && handler.tasks != nil {
+		_ = handler.tasks.RecordAudit(r.Context(), audit)
+	}
+	writeSecureTaskFailure(w, failure)
 }
 
 func writeSecureTaskJSON(w http.ResponseWriter, status int, payload any) {

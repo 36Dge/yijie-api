@@ -21,6 +21,10 @@ func (*fakeSecureRepository) GetSecure(context.Context, domain.SecureScope, stri
 	return domain.Task{}, domain.ErrNotFound
 }
 
+func (*fakeSecureRepository) RecordSecureAudit(context.Context, domain.SecureTaskAudit) error {
+	return nil
+}
+
 func TestSecureCreateDerivesStableCanonicalDigest(t *testing.T) {
 	repository := &fakeSecureRepository{}
 	service := NewSecure(repository)
@@ -29,8 +33,8 @@ func TestSecureCreateDerivesStableCanonicalDigest(t *testing.T) {
 			TenantID: "9d1e1888-7ecf-42f6-8cbf-4d24101a801c",
 			UserID:   "4b4986b0-58cc-4dc8-8a9c-a83715951b41",
 		},
-		TaskType: " conversation ", Title: " Local task ",
-		Input:          []byte(`{"z":1,"a":"synthetic"}`),
+		TaskType:       " conversation ",
+		Input:          []byte(`{"schema_version":1,"content_mode":"local_only","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37"}`),
 		IdempotencyKey: "ad17b95d-a91d-4ef8-9736-8bc36cefcbb6",
 		RequestID:      "request-1",
 	}
@@ -38,10 +42,10 @@ func TestSecureCreateDerivesStableCanonicalDigest(t *testing.T) {
 		t.Fatalf("secure create: %v", err)
 	}
 	firstDigest := repository.created.CanonicalSHA256
-	if len(firstDigest) != 64 || repository.created.TaskType != "conversation" || repository.created.Title != "Local task" {
+	if len(firstDigest) != 64 || repository.created.TaskType != "conversation" {
 		t.Fatalf("unexpected normalized command: %#v", repository.created)
 	}
-	command.Input = []byte(`{"a":"synthetic","z":1}`)
+	command.Input = []byte(`{"client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37","content_mode":"local_only","schema_version":1}`)
 	if _, err := service.Create(context.Background(), command); err != nil {
 		t.Fatalf("secure create with reordered object: %v", err)
 	}
@@ -50,21 +54,22 @@ func TestSecureCreateDerivesStableCanonicalDigest(t *testing.T) {
 	}
 }
 
-func TestSecureCreateRejectsClientAuthorityFields(t *testing.T) {
+func TestSecureCreateRejectsNonContentFreeInput(t *testing.T) {
 	service := NewSecure(&fakeSecureRepository{})
 	base := domain.CreateSecureTask{
 		SecureScope: domain.SecureScope{
 			TenantID: "9d1e1888-7ecf-42f6-8cbf-4d24101a801c",
 			UserID:   "4b4986b0-58cc-4dc8-8a9c-a83715951b41",
 		},
-		TaskType: "conversation", Title: "Local task",
+		TaskType:       "conversation",
 		IdempotencyKey: "ad17b95d-a91d-4ef8-9736-8bc36cefcbb6",
 		RequestID:      "request-1",
 	}
 	for _, input := range []string{
-		`{"tenant_id":"9d1e1888-7ecf-42f6-8cbf-4d24101a801c"}`,
-		`{"nested":{"createdByUserId":"4b4986b0-58cc-4dc8-8a9c-a83715951b41"}}`,
-		`{"authorization":"allow"}`,
+		`{"schema_version":1,"content_mode":"local_only","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37","prompt":"secret"}`,
+		`{"schema_version":2,"content_mode":"local_only","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37"}`,
+		`{"schema_version":1,"content_mode":"cloud","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37"}`,
+		`{"schema_version":1,"content_mode":"local_only","client_reference_id":"not-a-uuid"}`,
 	} {
 		command := base
 		command.Input = []byte(input)

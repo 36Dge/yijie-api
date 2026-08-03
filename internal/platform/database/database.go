@@ -37,6 +37,7 @@ func RequireSchema(ctx context.Context, pool *pgxpool.Pool) error {
 	var tasksTable, auditLogsTable, usersTable, identitiesTable, tenantsTable, membershipsTable *string
 	var permissionsTable, rolesTable, rolePermissionsTable, membershipRolesTable *string
 	var taskIdempotencyTable *string
+	var idempotencyExpiryCurrent, unresolvedAuditCurrent bool
 	if err := pool.QueryRow(
 		ctx,
 		`SELECT
@@ -50,7 +51,17 @@ func RequireSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			to_regclass('roles')::text,
 			to_regclass('role_permissions')::text,
 			to_regclass('membership_roles')::text,
-			to_regclass('task_create_idempotency')::text`,
+			to_regclass('task_create_idempotency')::text,
+			EXISTS (
+				SELECT 1 FROM pg_attribute
+				WHERE attrelid = 'task_create_idempotency'::regclass
+				  AND attname = 'expires_at' AND attnotnull AND NOT attisdropped
+			),
+			EXISTS (
+				SELECT 1 FROM pg_attribute
+				WHERE attrelid = 'audit_logs'::regclass
+				  AND attname = 'tenant_id' AND NOT attnotnull AND NOT attisdropped
+			)`,
 	).Scan(
 		&tasksTable,
 		&auditLogsTable,
@@ -63,12 +74,15 @@ func RequireSchema(ctx context.Context, pool *pgxpool.Pool) error {
 		&rolePermissionsTable,
 		&membershipRolesTable,
 		&taskIdempotencyTable,
+		&idempotencyExpiryCurrent,
+		&unresolvedAuditCurrent,
 	); err != nil {
 		return fmt.Errorf("check database schema: %w", err)
 	}
 	if tasksTable == nil || auditLogsTable == nil || usersTable == nil || identitiesTable == nil ||
 		tenantsTable == nil || membershipsTable == nil || permissionsTable == nil || rolesTable == nil ||
-		rolePermissionsTable == nil || membershipRolesTable == nil || taskIdempotencyTable == nil {
+		rolePermissionsTable == nil || membershipRolesTable == nil || taskIdempotencyTable == nil ||
+		!idempotencyExpiryCurrent || !unresolvedAuditCurrent {
 		return errors.New("database schema is not current; run migrations before starting the API")
 	}
 	return nil

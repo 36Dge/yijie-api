@@ -13,7 +13,7 @@ import (
 //go:embed sql/*.sql
 var files embed.FS
 
-const LatestVersion int64 = 3
+const LatestVersion int64 = 4
 
 func Run(ctx context.Context, dsn, command string) error {
 	db, err := sql.Open("pgx", dsn)

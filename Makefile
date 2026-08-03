@@ -32,7 +32,16 @@ generate:
 	go tool oapi-codegen -generate types -package publicapi -o "$(CURDIR)/internal/interfaces/publicapi/types.gen.go" "$(CONTRACTS_DIR)/openapi/public/public.yaml"
 	go run ./cmd/contract-pin generated "$(CONTRACTS_LOCK)" "$(CURDIR)"
 
-generate-check: generate
+generate-check:
+	@test -f "$(CONTRACTS_DIR)/openapi/public/public.yaml" || (echo "Missing sibling yijie-contracts repository" && exit 1)
+	@tmp_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp_dir"' EXIT; \
+	go run ./cmd/contract-pin source "$(CONTRACTS_LOCK)" "$(CONTRACTS_DIR)"; \
+	go run ./cmd/contract-pin generator "$(CONTRACTS_LOCK)" "$(CURDIR)"; \
+	go tool oapi-codegen -generate types -package publicapi -o "$$tmp_dir/types.gen.go" "$(CONTRACTS_DIR)/openapi/public/public.yaml"; \
+	cmp -s "$$tmp_dir/types.gen.go" "$(CURDIR)/internal/interfaces/publicapi/types.gen.go" || \
+		(echo "Generated public API types are stale; run make generate" >&2; diff -u "$(CURDIR)/internal/interfaces/publicapi/types.gen.go" "$$tmp_dir/types.gen.go" || true; exit 1); \
+	go run ./cmd/contract-pin generated "$(CONTRACTS_LOCK)" "$(CURDIR)"
 
 migrate-up:
 	go run ./cmd/migrate up

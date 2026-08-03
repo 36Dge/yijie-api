@@ -34,12 +34,23 @@ type SecureScope struct {
 type CreateSecureTask struct {
 	SecureScope
 	TaskType        string
-	Title           string
 	Input           []byte
 	IdempotencyKey  string
 	CanonicalSHA256 string
 	RequestID       string
 	TraceID         string
+}
+
+type SecureTaskAudit struct {
+	Operation  string
+	Outcome    string
+	Code       string
+	RequestID  string
+	TraceID    string
+	UserID     string
+	TenantID   string
+	TaskID     string
+	StatusCode int
 }
 
 type CreateTask struct {

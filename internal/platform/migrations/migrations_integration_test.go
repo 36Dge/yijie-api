@@ -83,6 +83,17 @@ func TestExpandMigrationPreservesExistingDataAndTenantIsolation(t *testing.T) {
 	if secureIndex == nil || idempotencyTable == nil {
 		t.Fatalf("secure task migration is incomplete: index=%v idempotency=%v", secureIndex, idempotencyTable)
 	}
+	var expiresAtNullable, auditTenantNullable string
+	if err := db.QueryRowContext(ctx, `
+		SELECT
+			(SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'task_create_idempotency' AND column_name = 'expires_at'),
+			(SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'audit_logs' AND column_name = 'tenant_id')
+	`).Scan(&expiresAtNullable, &auditTenantNullable); err != nil {
+		t.Fatalf("inspect secure task hardening migration: %v", err)
+	}
+	if expiresAtNullable != "NO" || auditTenantNullable != "YES" {
+		t.Fatalf("unexpected hardening nullability: expires=%s audit_tenant=%s", expiresAtNullable, auditTenantNullable)
+	}
 
 	rows, err := db.QueryContext(ctx, "SELECT permission_key FROM permissions ORDER BY permission_key")
 	if err != nil {
@@ -159,8 +170,8 @@ func TestExpandMigrationPreservesExistingDataAndTenantIsolation(t *testing.T) {
 		t.Fatal("expected composite foreign key to reject a cross-tenant role assignment")
 	}
 
-	if err := goose.DownContext(ctx, db, "sql"); err == nil || !strings.Contains(err.Error(), "expand-only") {
-		t.Fatalf("expected explicit expand-only down failure, got %v", err)
+	if err := goose.DownContext(ctx, db, "sql"); err == nil || !strings.Contains(err.Error(), "forward-only") {
+		t.Fatalf("expected explicit forward-only down failure, got %v", err)
 	}
 	version, err := goose.GetDBVersionContext(ctx, db)
 	if err != nil {

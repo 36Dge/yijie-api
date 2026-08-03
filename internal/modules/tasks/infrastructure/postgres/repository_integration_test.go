@@ -38,7 +38,7 @@ func TestSecureRepositoryEnforcesCreatorScopeAndIdempotency(t *testing.T) {
 	repository := New(pool)
 	command := domain.CreateSecureTask{
 		SecureScope: domain.SecureScope{TenantID: tenantID.String(), UserID: creatorID.String()},
-		TaskType:    "conversation", Title: "Synthetic task", Input: []byte(`{"text":"hello"}`),
+		TaskType:    "conversation", Input: []byte(`{"schema_version":1,"content_mode":"local_only","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f37"}`),
 		IdempotencyKey: uuid.NewString(), CanonicalSHA256: strings.Repeat("a", 64),
 		RequestID: "request-secure-1", TraceID: "trace-secure-1",
 	}
@@ -68,8 +68,52 @@ func TestSecureRepositoryEnforcesCreatorScopeAndIdempotency(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM task_create_idempotency WHERE task_id = $1", created.ID).Scan(&idempotencyCount); err != nil {
 		t.Fatalf("count idempotency records: %v", err)
 	}
-	if taskCount != 1 || auditCount != 1 || idempotencyCount != 1 {
+	if taskCount != 1 || auditCount != 2 || idempotencyCount != 1 {
 		t.Fatalf("unexpected atomic counts: tasks=%d audits=%d idempotency=%d", taskCount, auditCount, idempotencyCount)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE task_create_idempotency SET created_at = now() - interval '48 hours', expires_at = now() - interval '24 hours' WHERE task_id = $1", created.ID); err != nil {
+		t.Fatalf("expire idempotency record: %v", err)
+	}
+	expired := command
+	expired.CanonicalSHA256 = strings.Repeat("c", 64)
+	expired.Input = []byte(`{"schema_version":1,"content_mode":"local_only","client_reference_id":"019fbd88-cbc3-7bf1-934d-7b05cd693f38"}`)
+	recreated, err := repository.CreateSecure(ctx, expired)
+	if err != nil || recreated.ID == created.ID {
+		t.Fatalf("expired idempotency key was not reusable: task=%#v err=%v", recreated, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE task_create_idempotency SET created_at = now() - interval '48 hours', expires_at = now() - interval '24 hours' WHERE task_id = $1", recreated.ID); err != nil {
+		t.Fatalf("expire replacement idempotency record: %v", err)
+	}
+	cleaned, err := repository.CleanupExpiredSecureIdempotency(ctx, 10)
+	if err != nil || cleaned != 1 {
+		t.Fatalf("bounded idempotency cleanup: cleaned=%d err=%v", cleaned, err)
+	}
+}
+
+func TestSecureAuditSupportsContentFreeUnresolvedAndVerifiedMatrix(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, _, cleanup := integrationDatabase(t, ctx)
+	defer cleanup()
+
+	repository := New(pool)
+	requestID := uuid.NewString()
+	if err := repository.RecordSecureAudit(ctx, domain.SecureTaskAudit{
+		Operation: "task.create", Outcome: "failure", Code: "unauthenticated",
+		RequestID: requestID, StatusCode: 401,
+	}); err != nil {
+		t.Fatalf("record unresolved audit: %v", err)
+	}
+	var tenantID, actorID *string
+	var metadata string
+	if err := pool.QueryRow(ctx, `
+		SELECT tenant_id::text, actor_id, metadata::text
+		FROM audit_logs WHERE request_id = $1
+	`, requestID).Scan(&tenantID, &actorID, &metadata); err != nil {
+		t.Fatalf("read unresolved audit: %v", err)
+	}
+	if tenantID != nil || actorID != nil || strings.Contains(metadata, "prompt") || !strings.Contains(metadata, "unauthenticated") {
+		t.Fatalf("audit crossed unresolved/content-free boundary: tenant=%v actor=%v metadata=%s", tenantID, actorID, metadata)
 	}
 }
 

@@ -165,7 +165,7 @@ func (handler *AccessHandler) GetMyCapabilities(w http.ResponseWriter, r *http.R
 	}
 	status, reason = http.StatusOK, AccessReasonSuccess
 	writeAccessJSON(w, status, CapabilityProjection{
-		SchemaVersion:         N1,
+		SchemaVersion:         CapabilityProjectionSchemaVersionN1,
 		TenantId:              projection.TenantID,
 		AuthorizationRevision: projection.AuthorizationRevision,
 		ExpiresAt:             projection.ExpiresAt,

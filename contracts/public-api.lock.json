@@ -2,14 +2,14 @@
   "schema_version": 1,
   "contract_version": "0.3.0-candidate",
   "repository": "https://github.com/36Dge/yijie-contracts.git",
-  "full_commit": "c000a0245acb5c3f7ead5d2a877fb60c281c588c",
+  "full_commit": "29317b6426578749dc698fc2ad32b986ee5c8e9f",
   "source_path": "openapi/public/public.yaml",
-  "source_sha256": "c7ab2577b26a0776a7c204d3b9ee38b424cbaf0b9b0dc33d99a6806dfced998b",
+  "source_sha256": "c8d9e6742802e0f0392ea8221a5fdd028f76107df893ab4c531da75f9e9e354b",
   "generator": {
     "module": "github.com/oapi-codegen/oapi-codegen/v2",
     "version": "v2.7.2",
     "command": "go tool oapi-codegen -generate types -package publicapi"
   },
   "generated_path": "internal/interfaces/publicapi/types.gen.go",
-  "generated_sha256": "05d417007c12596b923f9fc1d9de4872e26692e722d3a5d95f126272c0fdaf51"
+  "generated_sha256": "438b084d65a925ebb7ccef6d7ab5d16fdc9d0990dc14ab536ee073ff298fab33"
 }
