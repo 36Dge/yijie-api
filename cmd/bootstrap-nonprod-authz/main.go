@@ -25,7 +25,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout, std
 	inputPath := flags.String("input", "", "path to a synthetic nonproduction bootstrap manifest, or - for stdin")
 	profile := flags.String("profile", "", "explicit bootstrap execution profile")
 	if err := flags.Parse(args); err != nil || *inputPath == "" || flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: bootstrap-nonprod-authz --input <manifest.json|-> [--profile feat-125-local-lab]")
+		fmt.Fprintln(stderr, "usage: bootstrap-nonprod-authz --input <manifest.json|-> [--profile feat-125-local-lab|feat-126-s10-local-lab]")
 		return 2
 	}
 	environment := getenv("YIJIE_ENV")
@@ -64,7 +64,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout, std
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := migrations.RequireCurrent(ctx, dsn); err != nil {
-		fmt.Fprintln(stderr, "bootstrap requires database migration version 2")
+		fmt.Fprintf(stderr, "bootstrap requires database migration version %d\n", migrations.LatestVersion)
 		return 1
 	}
 	pool, err := database.Open(ctx, dsn, 0, 2)

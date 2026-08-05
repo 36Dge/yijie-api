@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -212,6 +213,98 @@ func TestBootstrapBuildsTwoUserTwoTenantAuthorizationMatrix(t *testing.T) {
 	assertTenantRevision(t, ctx, pool, userA.TenantID, 3)
 	assertTenantRevision(t, ctx, pool, tenantBID, 3)
 	assertCount(t, ctx, pool, "audit_logs", 8)
+}
+
+func TestFeat126S10ProfileBuildsAndVerifiesClosedMatrixFromTrackedManifests(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, cleanup := bootstrapDatabase(t, ctx)
+	defer cleanup()
+
+	if _, err := VerifyExecutionState(ctx, pool, Feat126S10LocalLabProfile, ExecutionStateEmpty); err != nil {
+		t.Fatalf("verify empty FEAT-126 bootstrap state: %v", err)
+	}
+
+	manifestNames := []string{
+		"user-a-tenant-a.json",
+		"user-a-tenant-b.json",
+		"user-b-tenant-a.json",
+		"user-b-tenant-b.json",
+	}
+	manifests := make([]Manifest, 0, len(manifestNames))
+	for _, name := range manifestNames {
+		path := filepath.Join("..", "..", "..", "config", "nonproduction", "feat-125-local-lab", name)
+		file, err := os.Open(path)
+		if err != nil {
+			t.Fatalf("open reviewed manifest %s: %v", name, err)
+		}
+		manifest, decodeErr := DecodeManifest(file)
+		closeErr := file.Close()
+		if decodeErr != nil || closeErr != nil {
+			t.Fatalf("decode reviewed manifest %s: decode=%v close=%v", name, decodeErr, closeErr)
+		}
+		if err := ValidateExecutionManifest(Feat126S10LocalLabProfile, manifest); err != nil {
+			t.Fatalf("validate reviewed manifest %s: %v", name, err)
+		}
+		manifests = append(manifests, manifest)
+	}
+
+	runner := New(pool, Environment, LocalLabIssuer)
+	firstPass, err := runner.RunClosedMatrix(ctx, manifests)
+	if err != nil {
+		t.Fatalf("first FEAT-126 bootstrap batch: %v", err)
+	}
+	for index, result := range firstPass {
+		if !result.StateChanged || len(result.AuthorizationDiff) == 0 {
+			t.Fatalf("first FEAT-126 bootstrap pass entry %d: result=%#v", index, result)
+		}
+		expectedRevision := int64(2)
+		if index >= 2 {
+			expectedRevision = 3
+		}
+		if result.AuthorizationRevision != expectedRevision {
+			t.Fatalf("first FEAT-126 bootstrap pass entry %d: expected revision %d, got %d", index, expectedRevision, result.AuthorizationRevision)
+		}
+	}
+	secondPass, err := runner.RunClosedMatrix(ctx, manifests)
+	if err != nil {
+		t.Fatalf("idempotent FEAT-126 bootstrap batch: %v", err)
+	}
+	for index, result := range secondPass {
+		if result.StateChanged || result.AuthorizationRevision != 3 || len(result.AuthorizationDiff) != 0 {
+			t.Fatalf("idempotent FEAT-126 bootstrap pass entry %d: result=%#v", index, result)
+		}
+	}
+
+	verified, err := VerifyExecutionState(ctx, pool, Feat126S10LocalLabProfile, ExecutionStateComplete)
+	if err != nil {
+		t.Fatalf("verify complete FEAT-126 bootstrap state: result=%#v err=%v", verified, err)
+	}
+}
+
+func TestFeat126S10ClosedMatrixRollsBackAllStateAndAudits(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, cleanup := bootstrapDatabase(t, ctx)
+	defer cleanup()
+	installBootstrapAuditRejector(t, ctx, pool, "NEW.outcome = 'success'")
+
+	results, err := New(pool, Environment, LocalLabIssuer).RunClosedMatrix(ctx, localLabTestMatrix())
+	if !errors.Is(err, ErrUnavailable) || len(results) != 4 {
+		t.Fatalf("expected atomic batch failure: results=%#v err=%v", results, err)
+	}
+	for _, table := range []string{
+		"users",
+		"user_identities",
+		"tenants",
+		"tenant_memberships",
+		"roles",
+		"role_permissions",
+		"membership_roles",
+		"audit_logs",
+	} {
+		assertCount(t, ctx, pool, table, 0)
+	}
 }
 
 func TestBootstrapRollsBackWhenSuccessAuditFails(t *testing.T) {

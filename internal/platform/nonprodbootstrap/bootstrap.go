@@ -221,6 +221,79 @@ func (runner *Runner) Run(ctx context.Context, manifest Manifest) (Result, error
 	return result, nil
 }
 
+// RunClosedMatrix applies one already-validated four-manifest matrix in a
+// single transaction. Failed execution cannot leave partial authorization or
+// bootstrap-audit state.
+func (runner *Runner) RunClosedMatrix(ctx context.Context, manifests []Manifest) ([]Result, error) {
+	results := make([]Result, len(manifests))
+	if runner == nil || len(manifests) != 4 {
+		return results, ErrUnavailable
+	}
+	for index, manifest := range manifests {
+		results[index] = Result{
+			RequestID: "feat-125-bootstrap-" + uuid.NewString(),
+			UserID:    manifest.UserID,
+			TenantID:  manifest.TenantID,
+			Role:      manifest.Role,
+		}
+		if err := manifest.Validate(runner.environment, runner.expectedIssuer); err != nil {
+			return results, err
+		}
+	}
+	if runner.pool == nil {
+		return results, ErrUnavailable
+	}
+
+	tx, err := runner.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return results, ErrUnavailable
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	appliedResults := make([]applyResult, len(manifests))
+	for index, manifest := range manifests {
+		applied, applyErr := apply(ctx, tx, manifest)
+		if applyErr != nil {
+			_ = tx.Rollback(ctx)
+			return results, applyErr
+		}
+		if err := writeAudit(
+			ctx,
+			tx,
+			manifest,
+			results[index].RequestID,
+			"success",
+			applied.stateChanged,
+			"none",
+			&applied.authorizationRevision,
+			applied.authorizationDiff,
+		); err != nil {
+			_ = tx.Rollback(ctx)
+			return results, ErrUnavailable
+		}
+		appliedResults[index] = applied
+		results[index].StateChanged = applied.stateChanged
+		results[index].AuthorizationRevision = applied.authorizationRevision
+		results[index].AuthorizationDiff = applied.authorizationDiff
+	}
+
+	commit := runner.commit
+	if commit == nil {
+		commit = func(ctx context.Context, tx pgx.Tx) error { return tx.Commit(ctx) }
+	}
+	if err := commit(ctx, tx); err != nil {
+		if errors.Is(err, pgx.ErrTxCommitRollback) {
+			return results, ErrUnavailable
+		}
+		for index, manifest := range manifests {
+			if !committedAuditExists(runner.pool, manifest, results[index].RequestID, appliedResults[index]) {
+				return results, ErrOutcomeUnknown
+			}
+		}
+	}
+	return results, nil
+}
+
 func committedAuditExists(
 	pool *pgxpool.Pool,
 	manifest Manifest,

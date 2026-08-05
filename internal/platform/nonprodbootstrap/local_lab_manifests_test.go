@@ -60,6 +60,9 @@ func TestTrackedLocalLabManifestMatrix(t *testing.T) {
 		if err := ValidateExecutionManifest(LocalLabProfile, manifest); err != nil {
 			t.Fatalf("bind local-lab manifest %s to fixed matrix: %v", entry.Name(), err)
 		}
+		if err := ValidateExecutionManifest(Feat126S10LocalLabProfile, manifest); err != nil {
+			t.Fatalf("bind local-lab manifest %s to FEAT-126 fixed matrix: %v", entry.Name(), err)
+		}
 		if manifest.Issuer != LocalLabIssuer || manifest.Subject != want.userID ||
 			manifest.UserID != uuid.MustParse(want.userID) || manifest.TenantID != uuid.MustParse(want.tenantID) ||
 			manifest.TenantName != want.tenantName || manifest.Role != want.role ||
