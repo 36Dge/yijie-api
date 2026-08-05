@@ -34,7 +34,7 @@ func main() {
 		os.Exit(1)
 	}
 	var accessHTTPClient *http.Client
-	if config.PermissionProjectionEnabled && config.ServiceProfile == app.ServiceProfileFeat125LocalLab {
+	if config.PermissionProjectionEnabled && app.IsClosedLocalLabServiceProfile(config.ServiceProfile) {
 		accessHTTPClient, err = authn.NewLocalLabPinnedCAHTTPClient(config.LocalCAPEMPath, config.LocalCASHA256)
 		if err != nil {
 			logger.Error("invalid local CA configuration", "error", err)

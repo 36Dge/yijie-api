@@ -15,14 +15,18 @@ import (
 	"github.com/36Dge/yijie-api/internal/interfaces/publicapi"
 	"github.com/36Dge/yijie-api/internal/modules/tasks/application"
 	taskhttp "github.com/36Dge/yijie-api/internal/modules/tasks/interfaces/http"
+	"github.com/36Dge/yijie-api/internal/platform/nonprodbootstrap"
 )
 
 const (
-	ServiceName                   = "yijie-api"
-	ServiceProfileDefault         = "default"
-	ServiceProfileFeat125LocalLab = "feat-125-local-lab"
-	Feat125LocalLabIssuer         = "https://localhost:8443/realms/yijie-local"
-	Feat125LocalLabJWKSURL        = "https://localhost:8443/realms/yijie-local/protocol/openid-connect/certs"
+	ServiceName                      = "yijie-api"
+	ServiceProfileDefault            = "default"
+	ServiceProfileFeat125LocalLab    = "feat-125-local-lab"
+	ServiceProfileFeat126S10LocalLab = nonprodbootstrap.Feat126S10LocalLabProfile
+	Feat125LocalLabIssuer            = "https://localhost:8443/realms/yijie-local"
+	Feat125LocalLabJWKSURL           = "https://localhost:8443/realms/yijie-local/protocol/openid-connect/certs"
+	Feat126S10LocalLabIssuer         = nonprodbootstrap.LocalLabIssuer
+	Feat126S10LocalLabJWKSURL        = "https://localhost:8443/realms/yijie-local/protocol/openid-connect/certs"
 )
 
 type Config struct {
@@ -97,27 +101,37 @@ func LoadConfig() (Config, error) {
 
 	environment := env("YIJIE_ENV", "local")
 	serviceProfile := env("YIJIE_API_SERVICE_PROFILE", ServiceProfileDefault)
-	if serviceProfile != ServiceProfileDefault && serviceProfile != ServiceProfileFeat125LocalLab {
+	if serviceProfile != ServiceProfileDefault &&
+		serviceProfile != ServiceProfileFeat125LocalLab &&
+		serviceProfile != ServiceProfileFeat126S10LocalLab {
 		return Config{}, errors.New("YIJIE_API_SERVICE_PROFILE is invalid")
 	}
 	if serviceProfile == ServiceProfileFeat125LocalLab && environment != "local" && environment != "nonproduction" {
 		return Config{}, errors.New("feat-125-local-lab service profile requires a local or nonproduction environment")
 	}
+	if serviceProfile == ServiceProfileFeat126S10LocalLab && environment != nonprodbootstrap.Environment {
+		return Config{}, errors.New("feat-126-s10-local-lab service profile requires the nonproduction environment")
+	}
 
+	rawPostgresDSN := os.Getenv("YIJIE_API_POSTGRES_DSN")
+	rawAccessIssuer := os.Getenv("YIJIE_API_ACCESS_ISSUER")
+	rawAccessJWKSURL := os.Getenv("YIJIE_API_ACCESS_JWKS_URL")
+	rawLocalCAPEMPath := os.Getenv("YIJIE_API_LOCAL_CA_PEM_PATH")
+	rawLocalCASHA256 := os.Getenv("YIJIE_API_LOCAL_CA_SHA256")
 	config := Config{
 		Environment:                 environment,
 		ServiceProfile:              serviceProfile,
 		Port:                        env("YIJIE_API_PORT", "8080"),
-		PostgresDSN:                 strings.TrimSpace(os.Getenv("YIJIE_API_POSTGRES_DSN")),
+		PostgresDSN:                 strings.TrimSpace(rawPostgresDSN),
 		RedisURL:                    strings.TrimSpace(os.Getenv("YIJIE_API_REDIS_URL")),
 		DatabaseMinConns:            minConns,
 		DatabaseMaxConns:            maxConns,
 		PermissionProjectionEnabled: projectionEnabled,
 		SecureTasksEnabled:          secureTasksEnabled,
-		AccessIssuer:                strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_ISSUER")),
-		AccessJWKSURL:               strings.TrimSpace(os.Getenv("YIJIE_API_ACCESS_JWKS_URL")),
-		LocalCAPEMPath:              strings.TrimSpace(os.Getenv("YIJIE_API_LOCAL_CA_PEM_PATH")),
-		LocalCASHA256:               strings.TrimSpace(os.Getenv("YIJIE_API_LOCAL_CA_SHA256")),
+		AccessIssuer:                strings.TrimSpace(rawAccessIssuer),
+		AccessJWKSURL:               strings.TrimSpace(rawAccessJWKSURL),
+		LocalCAPEMPath:              strings.TrimSpace(rawLocalCAPEMPath),
+		LocalCASHA256:               strings.TrimSpace(rawLocalCASHA256),
 	}
 	if config.PostgresDSN == "" {
 		return Config{}, errors.New("YIJIE_API_POSTGRES_DSN is required")
@@ -125,6 +139,33 @@ func LoadConfig() (Config, error) {
 	if config.PermissionProjectionEnabled && (config.AccessIssuer == "" || config.AccessJWKSURL == "") {
 		return Config{}, errors.New("enabled permission projection requires YIJIE_API_ACCESS_ISSUER and YIJIE_API_ACCESS_JWKS_URL")
 	}
+	if serviceProfile == ServiceProfileFeat126S10LocalLab {
+		if os.Getenv("YIJIE_API_PERMISSION_PROJECTION_ENABLED") != "true" ||
+			os.Getenv("YIJIE_API_SECURE_TASKS_ENABLED") != "true" {
+			return Config{}, errors.New("feat-126-s10-local-lab service profile requires permission projection and secure tasks")
+		}
+		if err := nonprodbootstrap.ValidateExecutionProfile(
+			serviceProfile,
+			environment,
+			rawAccessIssuer,
+			rawPostgresDSN,
+		); err != nil {
+			return Config{}, errors.New("feat-126-s10-local-lab service profile configuration is invalid")
+		}
+		if rawAccessIssuer != Feat126S10LocalLabIssuer || rawAccessJWKSURL != Feat126S10LocalLabJWKSURL {
+			return Config{}, errors.New("feat-126-s10-local-lab permission projection requires the exact local issuer and JWKS URL")
+		}
+		if rawLocalCAPEMPath == "" || rawLocalCAPEMPath != strings.TrimSpace(rawLocalCAPEMPath) ||
+			rawLocalCASHA256 != config.LocalCASHA256 || !isLowerHexSHA256(rawLocalCASHA256) {
+			return Config{}, errors.New("feat-126-s10-local-lab permission projection requires a local CA PEM path and lowercase SHA-256 pin")
+		}
+		if !isCanonicalTCPPort(config.Port) {
+			return Config{}, errors.New("feat-126-s10-local-lab service profile requires a canonical TCP port")
+		}
+		return config, nil
+	}
+
+	// Keep the existing FEAT-125/default validation and error contract unchanged.
 	if config.SecureTasksEnabled && (!config.PermissionProjectionEnabled || config.ServiceProfile != ServiceProfileFeat125LocalLab) {
 		return Config{}, errors.New("secure tasks require enabled permission projection in the feat-125-local-lab service profile")
 	}
@@ -143,6 +184,10 @@ func LoadConfig() (Config, error) {
 		return Config{}, errors.New("local CA configuration requires enabled feat-125-local-lab permission projection")
 	}
 	return config, nil
+}
+
+func IsClosedLocalLabServiceProfile(profile string) bool {
+	return profile == ServiceProfileFeat125LocalLab || profile == ServiceProfileFeat126S10LocalLab
 }
 
 func NewHandler(config Config, database Database, tasks *application.Service, options ...HandlerOption) http.Handler {
@@ -178,7 +223,7 @@ func NewHandler(config Config, database Database, tasks *application.Service, op
 		mux.HandleFunc("GET /v2/tasks/{task_id}", settings.secureTasks.GetTask)
 	}
 
-	if config.ServiceProfile != ServiceProfileFeat125LocalLab {
+	if !IsClosedLocalLabServiceProfile(config.ServiceProfile) {
 		taskHandler := taskhttp.New(tasks)
 		mux.HandleFunc("POST /v1/tasks", taskHandler.Create)
 		mux.HandleFunc("GET /v1/tasks/{task_id}", taskHandler.Get)
@@ -187,7 +232,7 @@ func NewHandler(config Config, database Database, tasks *application.Service, op
 }
 
 func ServerAddress(config Config) string {
-	if config.ServiceProfile == ServiceProfileFeat125LocalLab {
+	if IsClosedLocalLabServiceProfile(config.ServiceProfile) {
 		return net.JoinHostPort("127.0.0.1", config.Port)
 	}
 	return ":" + config.Port
@@ -263,4 +308,9 @@ func isLowerHexSHA256(value string) bool {
 		}
 	}
 	return true
+}
+
+func isCanonicalTCPPort(value string) bool {
+	parsed, err := strconv.ParseUint(value, 10, 16)
+	return err == nil && parsed > 0 && strconv.FormatUint(parsed, 10) == value
 }

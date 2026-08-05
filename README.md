@@ -44,7 +44,16 @@ endpoint。只有显式开启时才要求同时提供 `YIJIE_API_ACCESS_ISSUER` 
 host 不能由环境变量放宽；默认 profile 保持既有 `:<port>` 监听行为和 Tasks wire contract
 不变。
 
-该 profile 开启 permission projection 时，还会锁死 issuer 与 JWKS 为本地 Keycloak 的精确 HTTPS
+`YIJIE_API_SERVICE_PROFILE=feat-126-s10-local-lab` 是 FEAT-126 S10 专用的封闭本地运行
+profile，只能由 `yijie-infra` 的版本化 runtime authority 启动，不能作为日常开发或生产开关。
+它要求 `YIJIE_ENV=nonproduction`、permission projection 与 secure Tasks 均精确为 `true`，
+并把 PostgreSQL 锁定到带非空凭据的
+`127.0.0.1:5432/yijie_api_feat126_s10?sslmode=disable`。issuer、JWKS、local CA path/pin、
+canonical TCP port、IPv4 loopback bind 和 legacy `/v1/tasks` 隔离同样 fail closed；任一缺失、
+漂移、通用/未知 profile 或额外 DSN query 都会在数据库连接前被拒绝。该 profile 不改变
+`feat-125-local-lab`、默认配置或 production 行为。
+
+`feat-125-local-lab` 开启 permission projection 时，还会锁死 issuer 与 JWKS 为本地 Keycloak 的精确 HTTPS
 地址，并要求同时设置 `YIJIE_API_LOCAL_CA_PEM_PATH`（绝对路径）与
 `YIJIE_API_LOCAL_CA_SHA256`（小写 SHA-256）。API 只为这一条 JWKS 出站链路创建独立、禁用代理与
 redirect 的 TLS client；CA 必须是 owner-only `0400`/`0600`、不超过 64 KiB 的单一 public CA
