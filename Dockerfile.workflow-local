@@ -1,0 +1,31 @@
+# Infra must supply the digest-pinned official Go 1.26.5 image from its image lock.
+ARG GO_IMAGE
+FROM ${GO_IMAGE} AS workflow-build
+WORKDIR /src
+ENV GOTOOLCHAIN=local CGO_ENABLED=0
+COPY go.mod go.sum ./
+RUN go mod download
+COPY internal/contracts/workflowlocal ./internal/contracts/workflowlocal
+COPY internal/workflowlocal ./internal/workflowlocal
+COPY internal/platform/database ./internal/platform/database
+COPY internal/modules/workflows ./internal/modules/workflows
+COPY contracts/workflow_schema.go contracts/workflow-local.schema.json contracts/workflow-local.source-lock.json ./contracts/
+COPY cmd/workflow-local-server ./cmd/workflow-local-server
+COPY cmd/workflow-local-migrate ./cmd/workflow-local-migrate
+RUN go build -p=2 -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o /out/workflow-local-server ./cmd/workflow-local-server
+RUN go build -p=2 -mod=readonly -trimpath -buildvcs=false -ldflags='-s -w -buildid=' -o /out/workflow-local-migrate ./cmd/workflow-local-migrate
+
+# This stage is also the opt-in real PostgreSQL test runner. It does not run tests
+# while building. Infra supplies only its dedicated network and credential mounts.
+FROM workflow-build AS workflow-test-runner
+ENV CGO_ENABLED=1 GOCACHE=/tmp/workflow-go-build GOPROXY=off GOSUMDB=off
+CMD ["go", "test", "-p=2", "-mod=readonly", "-race", "-count=1", "-tags=workflowintegration", "./internal/modules/workflows/infrastructure/postgres"]
+
+FROM scratch AS workflow-runtime
+COPY --from=workflow-build /out/workflow-local-server /usr/local/bin/workflow-local-server
+COPY --from=workflow-build /out/workflow-local-migrate /usr/local/bin/workflow-local-migrate
+# Infra sets the runtime UID/GID to match its newly created credential mounts.
+USER 65532:65532
+STOPSIGNAL SIGTERM
+EXPOSE 18888
+CMD ["/usr/local/bin/workflow-local-server"]

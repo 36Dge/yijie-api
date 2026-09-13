@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yijie.ai/deployment/workflow-local-runtime/v1",
+  "title": "FEAT-153 machine credential file",
+  "description": "Deployment authority owned by yijie-api. K_NA and K_AC use two distinct files with the same epoch, different tokens, and separate mounts. Neither file is a browser credential.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_epoch", "token"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "run_epoch": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+    "token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "x-environment": {
+    "YIJIE_ENV": "local",
+    "YIJIE_LOCAL_PROFILE": "demo_fast",
+    "YIJIE_WORKFLOW_ENABLED": "true",
+    "YIJIE_API_SERVICE_PROFILE": "feat-153-workflow-local",
+    "YIJIE_WORKFLOW_CREDENTIAL_FILE": "absolute owner-only K_NA file",
+    "YIJIE_WORKFLOW_COZE_CREDENTIAL_FILE": "absolute owner-only K_AC file",
+    "YIJIE_WORKFLOW_COZE_URL": "http://coze-workflow:18889",
+    "YIJIE_WORKFLOW_POSTGRES_DSN": "postgres://<runtime credentials>@workflow-postgres:5432/yijie_workflow_local?sslmode=disable",
+    "YIJIE_WORKFLOW_POSTGRES_DSN_FILE": "preferred deployment input: absolute owner-only, non-symlink, single-link file of at most 4096 bytes containing the same DSN; mutually exclusive with YIJIE_WORKFLOW_POSTGRES_DSN; read only in process, never copied to environment",
+    "YIJIE_WORKFLOW_NETWORK_SCOPE": "host (127.0.0.1:18888) or container (:18888; Infra must publish only host 127.0.0.1:18888)"
+  },
+  "x-editor-environment": {
+    "YIJIE_WORKFLOW_EDITOR_ENABLED": "optional true enables the verified static bundle; absent/false retains API-only mode and requires bundle settings absent",
+    "YIJIE_WORKFLOW_EDITOR_BUNDLE_DIR": "fixed /opt/yijie/workflow-editor; Infra read-only mount of the canonical Coze artifact",
+    "YIJIE_WORKFLOW_EDITOR_MANIFEST_SHA256": "verified lowercase SHA-256 of manifest.json; never an unverified manifest self-assertion",
+    "manifest_schema": "config/workflow-editor-assets.schema.json"
+  },
+  "x-coze-environment": {
+    "YIJIE_WORKFLOW_COZE_CREDENTIAL_FILE": "separate read-only K_AC credential JSON mount; no K_NA",
+    "YIJIE_WORKFLOW_NETWORK_SCOPE": "host binds 127.0.0.1:18889; container allows internal 0.0.0.0:18889 without a host publication",
+    "YIJIE_WORKFLOW_COZE_LISTEN_ADDR": "explicit 0.0.0.0:18889 in container scope; default 127.0.0.1:18889 is host-only and does not change automatically with network scope",
+    "YIJIE_WORKFLOW_MYSQL_DSN_FILE": "preferred absolute owner-only file, at most 8192 bytes; mutually exclusive with MYSQL_DSN; one final LF stripped; private Coze process input only",
+    "YIJIE_WORKFLOW_REDIS_PASSWORD_FILE": "absolute owner-only file, at most 4096 bytes; mutually exclusive with REDIS_PASSWORD",
+    "YIJIE_WORKFLOW_MINIO_ACCESS_FILE": "absolute owner-only file, at most 4096 bytes; mutually exclusive with MINIO_AK",
+    "YIJIE_WORKFLOW_MINIO_SECRET_FILE": "absolute owner-only file, at most 4096 bytes; mutually exclusive with MINIO_SK",
+    "MYSQL_DSN": "runtime-injected credentials; DBName=coze_workflow_local, Net=tcp, Addr=coze-workflow-mysql:3306 for container or 127.0.0.1:3306 for host; required parseTime=true; no multiStatements or custom/global TLS registrations"
+  }
+}

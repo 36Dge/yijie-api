@@ -20,9 +20,16 @@
 
 `cmd/admin-server`、`cmd/scheduler`、`cmd/webhook-server`、`cmd/worker` 和部分模块目录目前仍是占位，Codex 不得假定其能力已经实现。
 
-当前 `make generate` 直接读取相邻 contracts 工作树，尚无 contract version/full
-commit/digest/generator lock，CI 也未执行 generate-drift。它只能用于本地候选生成，
-不能满足不可变消费或 release-ready 门禁；接入真实版本前必须补锁和 CI。
+当前 `make generate` / `generate-check` 已使用 `contracts/public-api.lock.json` 的完整
+commit/source/generated digest/generator lock，CI 固定同一 Contracts SHA。不得把当前
+sibling HEAD 自动当作该旧锁来源。
+
+FEAT-153 新增独立 `cmd/workflow-local-server` / `cmd/workflow-local-migrate`、workflows 模块
+和 `contracts/workflow-local.lock.json`，按 ADR-0019/该需求第 05 设计只启用 exact local Demo。
+此候选的 source-first 和安全 focused checks 不改变原 api-server/OIDC/Tasks、旧 public lock、
+全局 migration version。独立数据库仅为 `yijie_workflow_local`；启动只校验 schema，然后正常
+EnsureLocalPrincipal，migration 仅由显式命令执行。新配置权威在 `config/workflow-local-runtime.schema.json`。
+源码/单元验证不代替 Coze/PostgreSQL 实测。2026-09-13真实数据库、正常重启和dev/packaged统一local D4已通过，最终证据见元仓FEAT-153/17；生产与公网资格仍不在范围内。
 
 ## 仓库边界
 

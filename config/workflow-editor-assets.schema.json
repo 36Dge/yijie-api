@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yijie.ai/deployment/workflow-editor-assets/v1",
+  "title": "FEAT-153 canonical Coze editor bundle manifest",
+  "description": "Deployment artifact produced by yijie-coze and verified by Infra/API. It is not a browser API DTO and is never served as an editor asset. contracts_lock_sha256 is the SHA-256 of canonical Contracts source.lock.json bytes, not a consumer lock.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "base_path", "source_repository", "source_commit", "source_digest", "contracts_lock_sha256", "files"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "base_path": {"const": "/editor/"},
+    "source_repository": {"const": "yijie-coze"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "contracts_lock_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "files": {
+      "type": "array", "minItems": 1, "maxItems": 512,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "sha256", "bytes", "content_type"],
+        "properties": {
+          "path": {"type": "string", "maxLength": 240, "pattern": "^(index\\.html|assets/(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\\.(?:js|css|svg|png|jpg|jpeg|webp|woff|woff2|ttf|ico))$"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 1, "maximum": 16777216},
+          "content_type": {"enum": ["text/html; charset=utf-8", "text/javascript; charset=utf-8", "text/css; charset=utf-8", "image/svg+xml", "image/png", "image/jpeg", "image/webp", "font/woff", "font/woff2", "font/ttf", "image/x-icon"]}
+        }
+      }
+    }
+  },
+  "x-limits": {"manifest_bytes": 262144, "total_asset_bytes": 67108864, "unique_paths": true, "required_entry": "index.html", "filename_mime_match": true},
+  "x-runtime": {"manifest_filename": "manifest.json", "directory": "/opt/yijie/workflow-editor", "serve_manifest": false, "load": "Verify the externally pinned manifest hash, source lock and every file once; serve an immutable memory snapshot by exact manifest path only."}
+}

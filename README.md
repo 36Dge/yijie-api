@@ -2,6 +2,11 @@
 
 Go 业务后端，MVP 阶段采用模块化单体。
 
+FEAT-153 新增独立 local workflow API 候选：专用进程、PG migration、固定 scope 与双段机器凭据、
+300 秒 native-only 编辑会话，以及 Coze HTTP adapter。旧 api-server/OIDC/Tasks 与公共契约锁不变。
+配置、正常启停和source-first见 [workflow-local](docs/workflow-local.md)。2026-09-13真实数据库及
+dev/packaged统一local D4已通过，最终证据见元仓FEAT-153/17；不包含生产发布。
+
 ## 仓库职责
 
 - 用户认证、租户、RBAC；
