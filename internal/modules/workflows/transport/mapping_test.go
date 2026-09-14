@@ -37,3 +37,30 @@ func TestNormalMultibyteInputUsesUTF8Limit(t *testing.T) {
 		t.Fatal("4098 UTF-8 bytes must return size error")
 	}
 }
+
+func TestCreateDescriptionRoundTripAndLegacyIntentBytes(t *testing.T) {
+	legacy := []byte(`{"name":"中文流程","operation_id":"15300000-0000-4000-8000-000000000001"}`)
+	r, err := ParseRequest("create", legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"Action":"create","WorkflowID":"","RunID":"","OperationID":"15300000-0000-4000-8000-000000000001","Name":"中文流程","Revision":"","Canvas":"","Input":"","Version":"","TestRunID":"","Cursor":"","Limit":0}`
+	if string(encoded) != want {
+		t.Fatalf("legacy intent bytes changed: %s", encoded)
+	}
+	description := "本地文本用途"
+	r.Description = &description
+	_, body := RequestBody(r)
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ParseRequest("create", data)
+	if err != nil || restored.Description == nil || *restored.Description != description {
+		t.Fatal("description mapping lost")
+	}
+}

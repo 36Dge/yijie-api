@@ -22,8 +22,11 @@ type normalService struct{ calls []domain.Request }
 
 func (s *normalService) Execute(_ context.Context, r domain.Request) (domain.Response, error) {
 	s.calls = append(s.calls, r)
-	workflow := domain.Workflow{ID: "123456789", Name: "Synthetic text", Revision: "revision1", Canvas: `{"nodes":[],"edges":[]}`, UpdatedAtMS: 1}
+	description := "合成流程用途"
+	workflow := domain.Workflow{Description: &description, ID: "123456789", Name: "Synthetic text", Revision: "revision1", Canvas: `{"nodes":[],"edges":[]}`, UpdatedAtMS: 1}
 	switch r.Action {
+	case "delete":
+		return domain.Response{Deletion: &domain.Deletion{WorkflowID: r.WorkflowID, Deleted: true}}, nil
 	case "status":
 		return domain.Response{Status: &domain.Status{Ready: true, Epoch: testEpoch}}, nil
 	case "principal":
@@ -171,5 +174,42 @@ func TestCommittedWriteResponseBudgetReturnsOriginalUnknownOperation(t *testing.
 	var reply wire.ErrorResponse
 	if w.Code != 409 || json.Unmarshal(w.Body.Bytes(), &reply) != nil || reply.Code != wire.OperationUnknown || reply.OperationId == nil || *reply.OperationId != testOp {
 		t.Fatal("post-write response failure must retain original uncertain operation")
+	}
+}
+
+func TestDescriptionResponseRequiresExplicitOptIn(t *testing.T) {
+	h := New(&normalService{}, strings.Repeat("a", 64), testEpoch, time.Now)
+	defer h.Close()
+	for _, path := range []string{"/v1/workflows", "/v1/workflows/123456789"} {
+		for _, metadata := range []string{"", "description-v1"} {
+			r := httptest.NewRequest("GET", path, nil)
+			r.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 64))
+			r.Header.Set("X-Yijie-Run-Epoch", testEpoch)
+			r.Header.Set("X-Yijie-Workflow-Metadata", metadata)
+			w := httptest.NewRecorder()
+			h.Routes().ServeHTTP(w, r)
+			if w.Code != 200 || strings.Contains(w.Body.String(), `"description"`) != (metadata != "") {
+				t.Fatalf("projection %s %s: %s", path, metadata, w.Body.String())
+			}
+		}
+	}
+}
+
+func TestConfirmedDeletionRevokesExistingSession(t *testing.T) {
+	h := New(&normalService{}, strings.Repeat("a", 64), testEpoch, time.Now)
+	defer h.Close()
+	router := h.Routes()
+	opened := request(t, router, "POST", "/v1/workflow-local/editor-sessions", wire.EditorOpenRequest{WorkflowId: "123456789"}, "")
+	var session wire.EditorSessionSecret
+	if json.Unmarshal(opened.Body.Bytes(), &session) != nil || session.Secret == "" {
+		t.Fatal("session missing")
+	}
+	deleted := request(t, router, "DELETE", "/v1/workflows/123456789", wire.DeleteRequest{ExpectedRevision: "revision1"}, "")
+	if deleted.Code != 200 || transport.Validate("DeleteResult", deleted.Body.Bytes()) != nil {
+		t.Fatalf("delete status %d: %s", deleted.Code, deleted.Body.String())
+	}
+	bootstrap := request(t, router, "GET", "/v1/workflows/123456789/bootstrap", nil, session.Secret)
+	if bootstrap.Code != 401 {
+		t.Fatal("deleted workflow session remained authorized")
 	}
 }

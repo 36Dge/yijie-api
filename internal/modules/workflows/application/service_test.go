@@ -79,6 +79,9 @@ type normalEngine struct {
 
 func (e *normalEngine) Execute(_ context.Context, r domain.Request) (domain.Response, error) {
 	switch r.Action {
+	case "delete":
+		e.writes++
+		return domain.Response{Deletion: &domain.Deletion{WorkflowID: r.WorkflowID, Deleted: true}}, nil
 	case "create", "save", "publish":
 		e.writes++
 		return domain.Response{Workflow: &e.workflow}, nil
@@ -201,5 +204,26 @@ func TestNormalMissingResourceDoesNotReachEngine(t *testing.T) {
 	var f *domain.Failure
 	if !errors.As(err, &f) || f.Code != "resource_not_found" {
 		t.Fatal("missing resource must remain not found")
+	}
+}
+
+func TestDeletionUsesOwnedResourceAndPerAttemptAudit(t *testing.T) {
+	repo := newMemory()
+	engine := &normalEngine{}
+	service := New(repo, engine, "epoch")
+	ctx := context.Background()
+	req := domain.Request{Action: "delete", WorkflowID: "123", Revision: "r1"}
+	if _, err := service.Execute(ctx, req); err == nil || engine.writes != 0 {
+		t.Fatal("unbound deletion reached engine")
+	}
+	repo.resources["123"] = true
+	for i := 0; i < 2; i++ {
+		result, err := service.Execute(ctx, req)
+		if err != nil || result.Deletion == nil || !result.Deletion.Deleted {
+			t.Fatal("idempotent delete result missing")
+		}
+	}
+	if repo.audits != 4 || len(repo.intents) != 0 || !repo.resources["123"] {
+		t.Fatal("delete audit/retained ownership semantics differ")
 	}
 }

@@ -73,6 +73,7 @@ func (c *Client) Execute(ctx context.Context, r domain.Request) (domain.Response
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("X-Yijie-Run-Epoch", c.epoch)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Yijie-Workflow-Metadata", "description-v1")
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -114,6 +115,8 @@ func route(r domain.Request) (string, string, int) {
 		return "GET", "/v1/workflows", 200
 	case "create":
 		return "POST", "/v1/workflows", 201
+	case "delete":
+		return "DELETE", base, 200
 	case "read":
 		return "GET", base, 200
 	case "save":

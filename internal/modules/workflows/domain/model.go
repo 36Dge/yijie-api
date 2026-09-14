@@ -20,6 +20,7 @@ func Fail(code string) error     { return &Failure{Code: code} }
 
 type Principal struct{ OwnerID, TenantID, UserID, SpaceID string }
 type Workflow struct {
+	Description                                  *string
 	ID, Name, Revision, Canvas, PublishedVersion string
 	Runnable                                     bool
 	UpdatedAtMS                                  int64
@@ -45,10 +46,18 @@ type Status struct {
 	Epoch string
 }
 type Request struct {
+	// Omit absent metadata to preserve hashes of existing operation intents.
+	Description                                                                                       *string `json:"Description,omitempty"`
 	Action, WorkflowID, RunID, OperationID, Name, Revision, Canvas, Input, Version, TestRunID, Cursor string
 	Limit                                                                                             int64
 }
+type Deletion struct {
+	WorkflowID string
+	Deleted    bool
+}
+
 type Response struct {
+	Deletion   *Deletion
 	Workflow   *Workflow
 	Workflows  []Workflow
 	Run        *Run

@@ -28,10 +28,10 @@ func Principal(p domain.Principal) wire.Principal {
 	return wire.Principal{OwnerId: p.OwnerID, TenantId: p.TenantID, UserId: p.UserID, SpaceId: p.SpaceID}
 }
 func Workflow(w domain.Workflow) wire.Workflow {
-	return wire.Workflow{WorkflowId: w.ID, Name: w.Name, Revision: w.Revision, Canvas: w.Canvas, Runnable: w.Runnable, UpdatedAtMs: w.UpdatedAtMS, PublishedVersion: ptr(w.PublishedVersion)}
+	return wire.Workflow{WorkflowId: w.ID, Name: w.Name, Description: w.Description, Revision: w.Revision, Canvas: w.Canvas, Runnable: w.Runnable, UpdatedAtMs: w.UpdatedAtMS, PublishedVersion: ptr(w.PublishedVersion)}
 }
 func fromWorkflow(w wire.Workflow) domain.Workflow {
-	return domain.Workflow{ID: w.WorkflowId, Name: w.Name, Revision: w.Revision, Canvas: w.Canvas, Runnable: w.Runnable, UpdatedAtMS: w.UpdatedAtMs, PublishedVersion: value(w.PublishedVersion)}
+	return domain.Workflow{ID: w.WorkflowId, Name: w.Name, Description: w.Description, Revision: w.Revision, Canvas: w.Canvas, Runnable: w.Runnable, UpdatedAtMS: w.UpdatedAtMs, PublishedVersion: value(w.PublishedVersion)}
 }
 func Receipt(r domain.Receipt) wire.OperationReceipt {
 	return wire.OperationReceipt{OperationId: r.OperationID, Kind: wire.OperationKind(r.Kind), Phase: wire.OperationPhase(r.Phase), WorkflowId: ptr(r.WorkflowID), Revision: ptr(r.Revision), Version: ptr(r.Version), RunId: ptr(r.RunID), Error: wireError(r.ErrorCode, r.OperationID)}
@@ -111,6 +111,10 @@ func ErrorStatus(err error) int {
 
 func EncodeResponse(action string, r domain.Response) (string, any, error) {
 	switch action {
+	case "delete":
+		if r.Deletion != nil {
+			return "DeleteResult", wire.DeleteResult{WorkflowId: r.Deletion.WorkflowID, Deleted: wire.DeleteResultDeleted(r.Deletion.Deleted)}, nil
+		}
 	case "status":
 		if r.Status != nil {
 			state := wire.Unavailable
@@ -130,7 +134,7 @@ func EncodeResponse(action string, r domain.Response) (string, any, error) {
 	case "list":
 		items := make([]wire.WorkflowSummary, 0, len(r.Workflows))
 		for _, w := range r.Workflows {
-			items = append(items, wire.WorkflowSummary{WorkflowId: w.ID, Name: w.Name, Revision: w.Revision, Runnable: w.Runnable, UpdatedAtMs: w.UpdatedAtMS, PublishedVersion: ptr(w.PublishedVersion)})
+			items = append(items, wire.WorkflowSummary{WorkflowId: w.ID, Name: w.Name, Description: w.Description, Revision: w.Revision, Runnable: w.Runnable, UpdatedAtMs: w.UpdatedAtMS, PublishedVersion: ptr(w.PublishedVersion)})
 		}
 		return "WorkflowList", wire.WorkflowList{Items: items, NextCursor: ptr(r.NextCursor)}, nil
 	case "run", "test", "read_run":
@@ -157,11 +161,15 @@ func EncodeResponse(action string, r domain.Response) (string, any, error) {
 
 func DecodeResponse(action string, data []byte) (domain.Response, error) {
 	r := domain.Response{}
-	name := map[string]string{"status": "ServiceStatus", "principal": "Principal", "create": "Workflow", "read": "Workflow", "save": "Workflow", "publish": "Workflow", "list": "WorkflowList", "run": "Run", "test": "Run", "read_run": "Run", "history": "RunList", "operation": "OperationReceipt", "bootstrap": "Bootstrap"}[action]
+	name := map[string]string{"delete": "DeleteResult", "status": "ServiceStatus", "principal": "Principal", "create": "Workflow", "read": "Workflow", "save": "Workflow", "publish": "Workflow", "list": "WorkflowList", "run": "Run", "test": "Run", "read_run": "Run", "history": "RunList", "operation": "OperationReceipt", "bootstrap": "Bootstrap"}[action]
 	if err := Validate(name, data); err != nil {
 		return r, domain.Fail("protocol_mismatch")
 	}
 	switch name {
+	case "DeleteResult":
+		var v wire.DeleteResult
+		_ = json.Unmarshal(data, &v)
+		r.Deletion = &domain.Deletion{WorkflowID: v.WorkflowId, Deleted: bool(v.Deleted)}
 	case "ServiceStatus":
 		var w wire.ServiceStatus
 		_ = json.Unmarshal(data, &w)
@@ -180,7 +188,7 @@ func DecodeResponse(action string, data []byte) (domain.Response, error) {
 		_ = json.Unmarshal(data, &w)
 		r.Workflows = make([]domain.Workflow, 0, len(w.Items))
 		for _, i := range w.Items {
-			r.Workflows = append(r.Workflows, domain.Workflow{ID: i.WorkflowId, Name: i.Name, Revision: i.Revision, Runnable: i.Runnable, UpdatedAtMS: i.UpdatedAtMs, PublishedVersion: value(i.PublishedVersion)})
+			r.Workflows = append(r.Workflows, domain.Workflow{ID: i.WorkflowId, Name: i.Name, Description: i.Description, Revision: i.Revision, Runnable: i.Runnable, UpdatedAtMS: i.UpdatedAtMs, PublishedVersion: value(i.PublishedVersion)})
 		}
 		r.NextCursor = value(w.NextCursor)
 	case "Run":
@@ -216,8 +224,10 @@ func DecodeResponse(action string, data []byte) (domain.Response, error) {
 
 func RequestBody(r domain.Request) (string, any) {
 	switch r.Action {
+	case "delete":
+		return "DeleteRequest", wire.DeleteRequest{ExpectedRevision: r.Revision}
 	case "create":
-		return "CreateRequest", wire.CreateRequest{Name: r.Name, OperationId: r.OperationID}
+		return "CreateRequest", wire.CreateRequest{Name: r.Name, Description: r.Description, OperationId: r.OperationID}
 	case "save":
 		return "SaveRequest", wire.SaveRequest{Name: r.Name, Canvas: r.Canvas, ExpectedRevision: r.Revision, OperationId: r.OperationID}
 	case "test":
@@ -232,7 +242,7 @@ func RequestBody(r domain.Request) (string, any) {
 
 func ParseRequest(action string, data []byte) (domain.Request, error) {
 	r := domain.Request{Action: action}
-	name := map[string]string{"create": "CreateRequest", "save": "SaveRequest", "test": "TestRequest", "publish": "PublishRequest", "run": "RunRequest"}[action]
+	name := map[string]string{"delete": "DeleteRequest", "create": "CreateRequest", "save": "SaveRequest", "test": "TestRequest", "publish": "PublishRequest", "run": "RunRequest"}[action]
 	if err := Validate(name, data); err != nil {
 		if errors.Is(err, ErrSize) {
 			return r, domain.Fail("input_too_large")
@@ -240,10 +250,15 @@ func ParseRequest(action string, data []byte) (domain.Request, error) {
 		return r, domain.Fail("invalid_request")
 	}
 	switch action {
+	case "delete":
+		var v wire.DeleteRequest
+		_ = json.Unmarshal(data, &v)
+		r.Revision = v.ExpectedRevision
 	case "create":
 		var w wire.CreateRequest
 		_ = json.Unmarshal(data, &w)
 		r.Name = w.Name
+		r.Description = w.Description
 		r.OperationID = w.OperationId
 	case "save":
 		var w wire.SaveRequest

@@ -49,7 +49,7 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	for _, r := range []struct{ pattern, action string }{
 		{"GET /v1/workflow-local/status", "status"}, {"POST /v1/workflow-local/principal", "principal"},
-		{"GET /v1/workflows", "list"}, {"POST /v1/workflows", "create"}, {"GET /v1/workflows/{workflow_id}", "read"}, {"PUT /v1/workflows/{workflow_id}", "save"},
+		{"DELETE /v1/workflows/{workflow_id}", "delete"}, {"GET /v1/workflows", "list"}, {"POST /v1/workflows", "create"}, {"GET /v1/workflows/{workflow_id}", "read"}, {"PUT /v1/workflows/{workflow_id}", "save"},
 		{"GET /v1/workflows/{workflow_id}/bootstrap", "bootstrap"}, {"POST /v1/workflows/{workflow_id}/test-runs", "test"}, {"POST /v1/workflows/{workflow_id}/versions", "publish"},
 		{"POST /v1/workflows/{workflow_id}/runs", "run"}, {"GET /v1/workflows/{workflow_id}/runs", "history"}, {"GET /v1/workflows/{workflow_id}/runs/{run_id}", "read_run"},
 		{"GET /v1/workflow-local/operations/{operation_id}", "operation"}, {"POST /v1/workflow-local/editor-sessions", "editor_open"}, {"DELETE /v1/workflow-local/editor-sessions/{session_id}", "editor_close"},
@@ -135,7 +135,7 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request, action string) 
 		writePayload(w, 201, "EditorSessionSecret", secret)
 		return
 	}
-	if action == "create" || action == "save" || action == "test" || action == "publish" || action == "run" {
+	if action == "delete" || action == "create" || action == "save" || action == "test" || action == "publish" || action == "run" {
 		data, err := readBody(r)
 		if err != nil {
 			writeFailure(w, err)
@@ -159,6 +159,27 @@ func (h *Handler) handle(w http.ResponseWriter, r *http.Request, action string) 
 	if err != nil {
 		writeFailure(w, err)
 		return
+	}
+	if action == "delete" && result.Deletion != nil && result.Deletion.Deleted {
+		h.mu.Lock()
+		for id, session := range h.sessions {
+			if session.workflow == request.WorkflowID {
+				delete(h.sessions, id)
+			}
+		}
+		h.mu.Unlock()
+	}
+	// Old strict readers receive their original projection, even for new resources.
+	if r.Header.Get("X-Yijie-Workflow-Metadata") != "description-v1" {
+		if result.Workflow != nil {
+			copy := *result.Workflow
+			copy.Description = nil
+			result.Workflow = &copy
+		}
+		result.Workflows = append([]domain.Workflow(nil), result.Workflows...)
+		for i := range result.Workflows {
+			result.Workflows[i].Description = nil
+		}
 	}
 	name, payload, err := transport.EncodeResponse(action, result)
 	if err != nil {

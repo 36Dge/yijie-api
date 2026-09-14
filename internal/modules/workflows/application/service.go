@@ -63,6 +63,9 @@ func (s *Service) Execute(ctx context.Context, request domain.Request) (domain.R
 			return domain.Response{}, domain.Fail("resource_not_found")
 		}
 	}
+	if request.Action == "delete" {
+		return s.delete(ctx, request)
+	}
 	if isWrite(request.Action) {
 		return s.write(ctx, request)
 	}
@@ -252,4 +255,29 @@ func failureCode(err error) string {
 		return f.Code
 	}
 	return "internal_error"
+}
+
+// Deletion is state-idempotent by resource/revision; no new legacy receipt kind.
+func (s *Service) delete(ctx context.Context, request domain.Request) (domain.Response, error) {
+	if err := s.repo.Audit(ctx, "delete", request.WorkflowID, "requested"); err != nil {
+		return domain.Response{}, err
+	}
+	response, err := s.engine.Execute(ctx, request)
+	if err == nil && (response.Deletion == nil || !response.Deletion.Deleted || response.Deletion.WorkflowID != request.WorkflowID) {
+		err = domain.Fail("protocol_mismatch")
+	}
+	if err != nil {
+		code := failureCode(err)
+		if auditErr := s.repo.Audit(ctx, "delete", request.WorkflowID, code); auditErr != nil {
+			return domain.Response{}, domain.Fail("operation_unknown")
+		}
+		if code == "service_unavailable" || code == "protocol_mismatch" || code == "storage_unavailable" || code == "internal_error" {
+			return domain.Response{}, domain.Fail("operation_unknown")
+		}
+		return domain.Response{}, err
+	}
+	if err = s.repo.Audit(ctx, "delete", request.WorkflowID, "success"); err != nil {
+		return domain.Response{}, domain.Fail("operation_unknown")
+	}
+	return response, nil
 }
