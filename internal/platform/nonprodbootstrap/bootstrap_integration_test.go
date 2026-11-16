@@ -66,7 +66,7 @@ func TestBootstrapIsIdempotentAuditedAndConflictSafe(t *testing.T) {
 	assertCount(t, ctx, pool, "tenants", 1)
 	assertCount(t, ctx, pool, "tenant_memberships", 2)
 	assertCount(t, ctx, pool, "roles", 2)
-	assertCount(t, ctx, pool, "role_permissions", 9)
+	assertCount(t, ctx, pool, "role_permissions", 11)
 	assertCount(t, ctx, pool, "membership_roles", 2)
 	assertCount(t, ctx, pool, "audit_logs", 4)
 	assertTenantRevision(t, ctx, pool, owner.TenantID, 3)
@@ -159,10 +159,10 @@ func TestBootstrapBuildsTwoUserTwoTenantAuthorizationMatrix(t *testing.T) {
 		permissionCount int
 	}
 	expected := map[string]expectedAssignment{
-		userA.UserID.String() + ":" + userA.TenantID.String(): {role: RoleTenantOwner, permissionCount: 7},
-		userA.UserID.String() + ":" + tenantBID.String():      {role: RoleTenantMember, permissionCount: 2},
-		userB.UserID.String() + ":" + userA.TenantID.String(): {role: RoleTenantMember, permissionCount: 2},
-		userB.UserID.String() + ":" + tenantBID.String():      {role: RoleTenantOwner, permissionCount: 7},
+		userA.UserID.String() + ":" + userA.TenantID.String(): {role: RoleTenantOwner, permissionCount: 8},
+		userA.UserID.String() + ":" + tenantBID.String():      {role: RoleTenantMember, permissionCount: 3},
+		userB.UserID.String() + ":" + userA.TenantID.String(): {role: RoleTenantMember, permissionCount: 3},
+		userB.UserID.String() + ":" + tenantBID.String():      {role: RoleTenantOwner, permissionCount: 8},
 	}
 	rows, err := pool.Query(ctx, `
 		SELECT assignment.user_id, assignment.tenant_id, role.role_key, count(role_permission.permission_key)

@@ -87,12 +87,12 @@ var systemRoles = [...]roleDefinition{
 	{
 		key:         RoleTenantOwner,
 		name:        "Tenant owner",
-		permissions: authorizationdomain.InitialPermissions(),
+		permissions: authorizationdomain.DefaultProductPermissions(),
 	},
 	{
 		key:         RoleTenantMember,
 		name:        "Tenant member",
-		permissions: []authorizationdomain.Permission{authorizationdomain.TaskCreate, authorizationdomain.TaskRead},
+		permissions: []authorizationdomain.Permission{authorizationdomain.TaskCreate, authorizationdomain.TaskRead, authorizationdomain.WebRetrieve},
 	},
 }
 

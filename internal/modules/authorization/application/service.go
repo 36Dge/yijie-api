@@ -79,7 +79,9 @@ func (service *Service) Project(ctx context.Context, userID, tenantID uuid.UUID)
 		return domain.Projection{}, domain.ErrInvalidProjection
 	}
 
-	result := slices.Clone(permissions)
+	// The legacy public capability enum remains unchanged. Web eligibility is
+	// resolved at the dedicated delegation endpoint using the same RBAC store.
+	result := slices.DeleteFunc(slices.Clone(permissions), func(p domain.Permission) bool { return p == domain.WebRetrieve })
 	slices.Sort(result)
 	result = slices.Compact(result)
 	for _, permission := range result {

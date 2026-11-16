@@ -103,7 +103,7 @@ func VerifyExecutionState(
 		Tenants:                  2,
 		TenantMemberships:        4,
 		Roles:                    4,
-		RolePermissions:          18,
+		RolePermissions:          22,
 		MembershipRoles:          4,
 		BootstrapAudits:          8,
 		ChangedBootstrapAudits:   4,
@@ -166,10 +166,10 @@ func VerifyExecutionState(
 			args: []any{
 				tenantA,
 				tenantB,
-				[]string{"knowledge.read", "plugin.read", "schedule.read", "store.read", "task.create", "task.read", "workspace.use"},
-				[]string{"task.create", "task.read"},
+				[]string{"knowledge.read", "plugin.read", "schedule.read", "store.read", "task.create", "task.read", "workspace.use", "web.retrieve"},
+				[]string{"task.create", "task.read", "web.retrieve"},
 			},
-			want: 18,
+			want: 22,
 		},
 		{
 			query: `SELECT count(*)

@@ -58,6 +58,8 @@ func main() {
 	}
 	var accessHandler *publicapi.AccessHandler
 	var secureTaskHandler *publicapi.SecureTaskHandler
+	var webHandler interface{ Register(*http.ServeMux) }
+	var webInternalServer *http.Server
 	var accessKeys *authn.RemoteKeySet
 	var cancelAccessKeys context.CancelFunc
 	if err == nil && config.PermissionProjectionEnabled {
@@ -78,6 +80,9 @@ func main() {
 					authorizationService,
 					observability.NewAccessMetrics(),
 				)
+				if config.Web.Enabled {
+					webHandler, webInternalServer, err = app.NewBuiltinWeb(config.Web, pool, accessHandler.WebIdentity(tenancyService, authorizationService), accessHandler.WebRevocationIdentity(tenancyService))
+				}
 				if config.SecureTasksEnabled {
 					secureTaskHandler = publicapi.NewSecureTaskHandler(
 						accessHandler,
@@ -131,16 +136,26 @@ func main() {
 	if secureTaskHandler != nil {
 		handlerOptions = append(handlerOptions, app.WithSecureTaskEndpoints(secureTaskHandler))
 	}
+	if webHandler != nil {
+		handlerOptions = append(handlerOptions, app.WithBuiltinWeb(webHandler))
+	}
+	writeTimeout := 15 * time.Second
+	if config.Web.Enabled {
+		writeTimeout = 55 * time.Second
+	}
 	server := &http.Server{
 		Addr:              app.ServerAddress(config),
 		Handler:           app.NewHandler(config, pool, taskService, handlerOptions...),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 
-	serverErrors := make(chan error, 1)
+	serverErrors := make(chan error, 2)
+	if webInternalServer != nil {
+		go func() { serverErrors <- webInternalServer.ListenAndServeTLS("", "") }()
+	}
 	go func() {
 		logger.Info(
 			"starting yijie-api",
@@ -158,15 +173,18 @@ func main() {
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "error", err)
-			os.Exit(1)
 		}
-		return
 	}
 
-	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownContext); err != nil {
 		logger.Error("shutdown failed", "error", err)
 		os.Exit(1)
+	}
+	if webInternalServer != nil {
+		if err := webInternalServer.Shutdown(shutdownContext); err != nil {
+			logger.Error("web internal shutdown incomplete")
+		}
 	}
 }

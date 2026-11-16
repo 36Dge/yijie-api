@@ -8,6 +8,7 @@ RUN go mod download
 COPY internal/contracts/workflowlocal ./internal/contracts/workflowlocal
 COPY internal/workflowlocal ./internal/workflowlocal
 COPY internal/platform/database ./internal/platform/database
+COPY internal/platform/ownedcredential ./internal/platform/ownedcredential
 COPY internal/modules/workflows ./internal/modules/workflows
 COPY contracts/workflow_schema.go contracts/workflow-local.schema.json contracts/workflow-local.source-lock.json ./contracts/
 COPY cmd/workflow-local-server ./cmd/workflow-local-server

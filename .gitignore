@@ -7,3 +7,6 @@ dist/
 coverage/
 *.log
 config/nonproduction/*.local.json
+
+# Local development services and evidence
+.local/

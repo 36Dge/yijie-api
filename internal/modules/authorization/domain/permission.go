@@ -32,6 +32,8 @@ const (
 	TaskCreate    Permission = "task.create"
 	TaskRead      Permission = "task.read"
 	WorkspaceUse  Permission = "workspace.use"
+	// WebRetrieve is exposed by builtin-web-retrieval/1, not the v1 projection.
+	WebRetrieve Permission = "web.retrieve"
 )
 
 var initialPermissions = [...]Permission{
@@ -50,7 +52,14 @@ func InitialPermissions() []Permission {
 	return result
 }
 
+// DefaultProductPermissions is used when provisioning a new default role.
+// Legacy v1 capability projection keeps its original seven-value wire enum.
+func DefaultProductPermissions() []Permission { return append(InitialPermissions(), WebRetrieve) }
+
 func (permission Permission) Known() bool {
+	if permission == WebRetrieve {
+		return true
+	}
 	for _, candidate := range initialPermissions {
 		if permission == candidate {
 			return true

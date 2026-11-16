@@ -24,8 +24,36 @@ func (repository *Repository) HasPermission(ctx context.Context, scope tenancy.S
 	if repository == nil || repository.pool == nil {
 		return false, fmt.Errorf("query permission assignment: %w", domain.ErrAuthorizationUnavailable)
 	}
+	return hasPermission(ctx, repository.pool, scope, permission)
+}
+
+type permissionQuery interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// LockPermission composes the existing RBAC predicate with a caller-owned
+// transaction. The tenant revision lock serializes admission and revocation.
+func LockPermission(ctx context.Context, tx pgx.Tx, scope tenancy.Scope, permission domain.Permission) error {
+	var revision int64
+	if err := tx.QueryRow(ctx, `SELECT authorization_revision FROM tenants WHERE id=$1 FOR UPDATE`, scope.TenantID).Scan(&revision); err != nil {
+		return domain.ErrDenied
+	}
+	if revision != scope.AuthorizationRevision {
+		return domain.ErrDenied
+	}
+	allowed, err := hasPermission(ctx, tx, scope, permission)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return domain.ErrDenied
+	}
+	return nil
+}
+
+func hasPermission(ctx context.Context, query permissionQuery, scope tenancy.Scope, permission domain.Permission) (bool, error) {
 	var allowed bool
-	err := repository.pool.QueryRow(ctx, `
+	err := query.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			FROM tenant_memberships AS membership

@@ -30,6 +30,7 @@ const (
 )
 
 type Config struct {
+	Web                         WebConfig
 	Environment                 string
 	ServiceProfile              string
 	Port                        string
@@ -62,8 +63,13 @@ type SecureTaskEndpoints interface {
 type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
+	web         interface{ Register(*http.ServeMux) }
 	access      AccessEndpoints
 	secureTasks SecureTaskEndpoints
+}
+
+func WithBuiltinWeb(web interface{ Register(*http.ServeMux) }) HandlerOption {
+	return func(options *handlerOptions) { options.web = web }
 }
 
 func WithSecureTaskEndpoints(tasks SecureTaskEndpoints) HandlerOption {
@@ -79,6 +85,10 @@ func WithAccessEndpoints(access AccessEndpoints) HandlerOption {
 }
 
 func LoadConfig() (Config, error) {
+	web, err := loadWebConfig()
+	if err != nil {
+		return Config{}, err
+	}
 	minConns, err := int32Env("YIJIE_API_DB_MIN_CONNS", 1)
 	if err != nil {
 		return Config{}, err
@@ -119,6 +129,7 @@ func LoadConfig() (Config, error) {
 	rawLocalCAPEMPath := os.Getenv("YIJIE_API_LOCAL_CA_PEM_PATH")
 	rawLocalCASHA256 := os.Getenv("YIJIE_API_LOCAL_CA_SHA256")
 	config := Config{
+		Web:                         web,
 		Environment:                 environment,
 		ServiceProfile:              serviceProfile,
 		Port:                        env("YIJIE_API_PORT", "8080"),
@@ -135,6 +146,9 @@ func LoadConfig() (Config, error) {
 	}
 	if config.PostgresDSN == "" {
 		return Config{}, errors.New("YIJIE_API_POSTGRES_DSN is required")
+	}
+	if config.Web.Enabled && !config.PermissionProjectionEnabled {
+		return Config{}, errors.New("builtin web requires product identity and RBAC")
 	}
 	if config.PermissionProjectionEnabled && (config.AccessIssuer == "" || config.AccessJWKSURL == "") {
 		return Config{}, errors.New("enabled permission projection requires YIJIE_API_ACCESS_ISSUER and YIJIE_API_ACCESS_JWKS_URL")
@@ -221,6 +235,9 @@ func NewHandler(config Config, database Database, tasks *application.Service, op
 	if config.SecureTasksEnabled && settings.secureTasks != nil {
 		mux.HandleFunc("POST /v2/tasks", settings.secureTasks.CreateTask)
 		mux.HandleFunc("GET /v2/tasks/{task_id}", settings.secureTasks.GetTask)
+	}
+	if config.Web.Enabled && settings.web != nil {
+		settings.web.Register(mux)
 	}
 
 	if !IsClosedLocalLabServiceProfile(config.ServiceProfile) {
