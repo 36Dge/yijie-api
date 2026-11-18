@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "FEAT-175",
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.1",
   "mode": "local_worktree_candidate",
   "release": false,
   "base_commit": "2592f5d5b07fcd92de10d25c4dcf73bd1ce03cb5",
@@ -19,7 +19,7 @@
     },
     {
       "path": "compatibility/builtin-web-retrieval/policy.json",
-      "sha256": "15aee18bdad7666960e358bb56666ced427475c6971ef0a80c290614a53ab52a"
+      "sha256": "7e9fea592684c487231d8be115b7a740c6483bba4afb033ea29505c21b613f95"
     },
     {
       "path": "openapi/public/web-retrieval.yaml",
@@ -51,15 +51,15 @@
     },
     {
       "path": "compatibility/runtime-tool-search/source.lock.json",
-      "sha256": "6bdde9eeb08baefbef3997bd34b0bb0963b7f11075042481f34624712e6a0eb7"
+      "sha256": "f7da4d129b97a17c743fef3320033171cbcd67b88e1154b2f918de5084e4aafc"
     },
     {
       "path": "scripts/builtin-web-source.mjs",
-      "sha256": "f29aa8e0c2e00b061149d443b71451c6d039157af6dd6fa4b1588934aff33fd4"
+      "sha256": "e29b915e5dfc8a6a328f45e5a40788d494a28c9750dc1241d42d9c5d9fa94ead"
     },
     {
       "path": "scripts/generate-builtin-web.mjs",
-      "sha256": "c074a70b77b423ad6ee33fcee051dec54106d1bc79a1b6c20ea5925821a1ef1b"
+      "sha256": "f0a2323f878258d93108ff2a36b03fcd55832f9799fb7f53cd65d06dbbdc90f4"
     },
     {
       "path": "scripts/generation-plan.mjs",
@@ -105,11 +105,11 @@
     },
     {
       "path": "sdks/jsonschema/builtin-web-retrieval.tools.json",
-      "sha256": "d6ba09caf2f216cb9cb3694979bff184c53c2ceeddf33609aa84ba6b5e2b5227"
+      "sha256": "81ffa8752799665ad50c2e2b95cca3fbf249a4ce66853c98340bdd1c04f6fc86"
     },
     {
       "path": "sdks/rust/builtinweb/source.gen.rs",
-      "sha256": "f64a7e157bc8fb099f555d00528b9f8fad2fe82cc6074f71d668ee64de48b311"
+      "sha256": "ae9c91f457ff5c7fba26e0bf0ec05e0de8d62968004dc91f7c2e166d9b7c3513"
     },
     {
       "path": "sdks/go/builtinweb/validate.gen.go",
