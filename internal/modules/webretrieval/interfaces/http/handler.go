@@ -25,6 +25,8 @@ type Handler struct {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/web-retrieval/delegations", h.Mint)
 	mux.HandleFunc("POST /v1/web-retrieval/operations", h.Execute)
+	mux.HandleFunc("POST /v2/web-retrieval/searches", h.executeSearch)
+	mux.HandleFunc("GET /v2/web-retrieval/searches/{scope}/{id}", h.readSearch)
 	mux.HandleFunc("GET /v1/web-retrieval/operations/{id}", h.Get)
 	mux.HandleFunc("POST /v1/web-retrieval/operations/{id}/cancel", h.Cancel)
 	mux.HandleFunc("POST /v1/web-retrieval/bindings/{id}/revoke", h.Revoke)
@@ -286,20 +288,44 @@ func (h *Handler) InternalHandler() http.Handler {
 		o := receipt.Operation
 		write(w, 200, wire.ClaimReceipt{OperationId: id.String(), ClaimId: o.ClaimID, ExecutorInstance: o.Executor, ParameterDigest: o.Digest, DeadlineUnixMs: int(o.Deadline.UnixMilli())})
 	})
-	mux.HandleFunc("POST /internal/v1/web-retrieval/finish", func(w http.ResponseWriter, r *http.Request) {
-		raw, err := read(r, "ClaimFinish")
+	finish := func(w http.ResponseWriter, r *http.Request) {
+		v2 := r.URL.Path == "/internal/v2/web-retrieval/finish"
+		schema := "ClaimFinish"
+		if v2 {
+			schema = "ClaimFinishV2"
+		}
+		raw, err := read(r, schema)
 		if err != nil {
 			fail(w, err)
 			return
 		}
 		var q wire.ClaimFinish
-		_ = json.Unmarshal(raw, &q)
+		facts := d.SearchFacts{}
+		if v2 {
+			var msg wire.ClaimFinishV2
+			if json.Unmarshal(raw, &msg) != nil {
+				fail(w, d.Invalid)
+				return
+			}
+			q = msg.Finish
+			facts.Transport = string(msg.Facts.Transport)
+			facts.Outcome = string(msg.Facts.Outcome)
+			if msg.Facts.ErrorCode != nil {
+				facts.ErrorCode = d.Code(*msg.Facts.ErrorCode)
+			}
+			if (q.State == "completed") != (facts.Transport == "responded" && (facts.Outcome == "results" || facts.Outcome == "partial" || facts.Outcome == "empty")) || (facts.Outcome == "failed") != (facts.ErrorCode != "") {
+				fail(w, d.Invalid)
+				return
+			}
+		} else {
+			_ = json.Unmarshal(raw, &q)
+		}
 		id, err := uuid.Parse(q.Receipt.OperationId)
 		if err != nil {
 			fail(w, d.Invalid)
 			return
 		}
-		receipt := d.Receipt{Operation: d.Operation{ID: id, ClaimID: q.Receipt.ClaimId, Executor: q.Receipt.ExecutorInstance, Digest: q.Receipt.ParameterDigest, Deadline: time.UnixMilli(int64(q.Receipt.DeadlineUnixMs))}}
+		receipt := d.Receipt{Operation: d.Operation{Facts: facts, ID: id, ClaimID: q.Receipt.ClaimId, Executor: q.Receipt.ExecutorInstance, Digest: q.Receipt.ParameterDigest, Deadline: time.UnixMilli(int64(q.Receipt.DeadlineUnixMs))}}
 		if err = h.Service.Repository.Finish(r.Context(), receipt, string(q.State), string(q.Dispatch)); err != nil {
 			fail(w, err)
 			return
@@ -309,6 +335,8 @@ func (h *Handler) InternalHandler() http.Handler {
 			availability = "result_unavailable"
 		}
 		write(w, 200, wire.OperationStatus{OperationId: id.String(), State: wire.OperationState(q.State), Dispatch: q.Dispatch, ResultAvailability: availability})
-	})
+	}
+	mux.HandleFunc("POST /internal/v1/web-retrieval/finish", finish)
+	mux.HandleFunc("POST /internal/v2/web-retrieval/finish", finish)
 	return mux
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/google/uuid"
 	"io"
 	"net/http"
 
@@ -35,6 +36,9 @@ func (e *Executor) Execute(ctx context.Context, o d.Operation, q d.Request) ([]b
 		return nil, d.Unavailable
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if q.SearchScope != uuid.Nil {
+		req.Header.Set("X-Yijie-Search-Receipt", "2")
+	}
 	response, err := e.Client.Do(req)
 	if err != nil {
 		return nil, d.Unavailable

@@ -55,7 +55,15 @@ type Grant struct {
 
 func (Grant) String() string { return "[web delegation redacted]" }
 
+type SearchFacts struct {
+	Transport string
+	Outcome   string
+	ErrorCode Code
+}
 type Operation struct {
+	SearchScope       uuid.UUID
+	Revision          int64
+	Facts             SearchFacts
 	ID                uuid.UUID
 	Binding           Binding
 	Digest            string
@@ -64,13 +72,16 @@ type Operation struct {
 	ClaimID, Executor uuid.UUID
 }
 type Request struct {
-	ID        uuid.UUID
-	Tool      string
-	Arguments []byte
-	Digest    string
+	SearchScope uuid.UUID
+	Deadline    time.Time
+	ID          uuid.UUID
+	Tool        string
+	Arguments   []byte
+	Digest      string
 }
 type Receipt struct{ Operation Operation }
 type Result struct {
+	Existing  bool
 	Operation Operation
 	Body      []byte
 	Failure   Code
@@ -84,8 +95,10 @@ type Repository interface {
 	Revoke(context.Context, Binding) error
 	Admit(context.Context, Binding, Request) (Operation, bool, error)
 	Get(context.Context, Binding, uuid.UUID) (Operation, error)
+	ReadScoped(context.Context, Binding, uuid.UUID, uuid.UUID) (Operation, error)
 	GetInternal(context.Context, uuid.UUID) (Operation, error)
 	Cancel(context.Context, Binding, uuid.UUID) (Operation, error)
+	EndBeforeClaim(context.Context, Binding, uuid.UUID, Code) (Operation, error)
 	Claim(context.Context, uuid.UUID, string, uuid.UUID) (Receipt, error)
 	Finish(context.Context, Receipt, string, string) error
 }

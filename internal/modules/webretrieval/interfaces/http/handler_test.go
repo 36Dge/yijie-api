@@ -43,7 +43,8 @@ func (e *ordinaryExecutor) Execute(ctx context.Context, o d.Operation, q d.Reque
 	}
 	return []byte(`{"results":[{"title":"Public documentation","url":"https://example.com/docs","snippet":"Ordinary local response"}],"truncated":false}`), nil
 }
-func TestBuiltinWebProductLifecycle(t *testing.T) {
+func isolatedWebPrincipal(t *testing.T) (*pgxpool.Pool, d.Scope) {
+	t.Helper()
 	dsn := os.Getenv("FEAT175_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("explicit isolated FEAT-175 PostgreSQL required")
@@ -57,11 +58,14 @@ func TestBuiltinWebProductLifecycle(t *testing.T) {
 	if err = migrations.Run(ctx, dsn, "up"); err != nil {
 		t.Fatal("isolated migration failed", err)
 	}
+	if err = migrations.RequireCurrent(ctx, dsn); err != nil {
+		t.Fatal("normal API startup rejected the migrated database", err)
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	scope := d.Scope{User: uuid.New(), Tenant: uuid.New(), Revision: 1}
 	role := uuid.New()
 	for _, q := range []struct {
@@ -79,6 +83,12 @@ func TestBuiltinWebProductLifecycle(t *testing.T) {
 			t.Fatal("test principal setup failed", err)
 		}
 	}
+	return pool, scope
+}
+func TestBuiltinWebProductLifecycle(t *testing.T) {
+	pool, scope := isolatedWebPrincipal(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	repo, err := postgres.New(pool, 20)
 	if err != nil {
 		t.Fatal(err)

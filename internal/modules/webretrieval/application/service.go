@@ -12,6 +12,7 @@ import (
 type running struct {
 	binding uuid.UUID
 	cancel  context.CancelFunc
+	done    chan struct{}
 }
 type cached struct {
 	binding uuid.UUID
@@ -32,7 +33,7 @@ func New(repository d.Repository, executor d.Executor) *Service {
 func (s *Service) cached(o d.Operation) d.Result {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := d.Result{Operation: o}
+	result := d.Result{Operation: o, Failure: o.Facts.ErrorCode}
 	for id, entry := range s.results {
 		if time.Now().After(entry.until) {
 			delete(s.results, id)
@@ -48,7 +49,32 @@ func (s *Service) Get(ctx context.Context, b d.Binding, id uuid.UUID) (d.Result,
 	if err != nil {
 		return d.Result{}, err
 	}
+	if o.SearchScope != uuid.Nil {
+		return s.ReadScoped(ctx, b, o.SearchScope, id)
+	}
 	return s.cached(o), nil
+}
+
+// Settlement is durable just before the owner publishes its retained body.
+func (s *Service) readRetained(ctx context.Context, o d.Operation) d.Result {
+	s.mu.Lock()
+	active := s.running[o.ID]
+	s.mu.Unlock()
+	if o.State == "completed" && active.done != nil {
+		select {
+		case <-active.done:
+		case <-ctx.Done():
+			return d.Result{Operation: o, Failure: "cancelled"}
+		}
+	}
+	return s.cached(o)
+}
+func (s *Service) ReadScoped(ctx context.Context, b d.Binding, scope, id uuid.UUID) (d.Result, error) {
+	o, err := s.Repository.ReadScoped(ctx, b, scope, id)
+	if err != nil {
+		return d.Result{}, err
+	}
+	return s.readRetained(ctx, o), nil
 }
 func (s *Service) Execute(ctx context.Context, b d.Binding, request d.Request) (d.Result, error) {
 	if s.executor == nil {
@@ -59,13 +85,23 @@ func (s *Service) Execute(ctx context.Context, b d.Binding, request d.Request) (
 		return d.Result{}, d.AdmissionFailure{Cause: err}
 	}
 	if !fresh {
-		return s.cached(o), nil
+		result := s.readRetained(ctx, o)
+		result.Existing = true
+		return result, nil
 	}
-	execution, cancel := context.WithDeadline(ctx, o.Deadline)
+	owner := ctx
+	if o.SearchScope != uuid.Nil {
+		// The HTTP caller may leave while another gateway waits on this
+		// operation. A durable admission settles under its own bounded deadline.
+		// Explicit operation cancel and binding revoke still cancel its owner.
+		owner = context.WithoutCancel(ctx)
+	}
+	execution, cancel := context.WithDeadline(owner, o.Deadline)
 	s.mu.Lock()
-	s.running[o.ID] = running{binding: b.ID, cancel: cancel}
+	done := make(chan struct{})
+	s.running[o.ID] = running{binding: b.ID, cancel: cancel, done: done}
 	s.mu.Unlock()
-	defer func() { cancel(); s.mu.Lock(); delete(s.running, o.ID); s.mu.Unlock() }()
+	defer func() { cancel(); s.mu.Lock(); delete(s.running, o.ID); close(done); s.mu.Unlock() }()
 	body, executionErr := s.executor.Execute(execution, o, request)
 	// Settle after caller cancellation with a bounded service-owned context.
 	settlement, stop := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
@@ -76,7 +112,15 @@ func (s *Service) Execute(ctx context.Context, b d.Binding, request d.Request) (
 	}
 	if executionErr != nil || current.State != "completed" {
 		if current.State == "ready" {
-			current, err = s.Repository.Cancel(settlement, b, o.ID)
+			if request.SearchScope != uuid.Nil && execution.Err() != context.Canceled {
+				reason := d.Unavailable
+				if execution.Err() == context.DeadlineExceeded {
+					reason = "timeout"
+				}
+				current, err = s.Repository.EndBeforeClaim(settlement, b, o.ID, reason)
+			} else {
+				current, err = s.Repository.Cancel(settlement, b, o.ID)
+			}
 		}
 		if current.State == "dispatch_committed" {
 			err = s.Repository.Finish(settlement, d.Receipt{Operation: current}, "unknown", "may_have_dispatched")
@@ -95,7 +139,7 @@ func (s *Service) Execute(ctx context.Context, b d.Binding, request d.Request) (
 		if current.Dispatch == "not_dispatched" {
 			failure = d.Unavailable
 		}
-		if ctx.Err() == context.Canceled {
+		if execution.Err() == context.Canceled {
 			failure = "cancelled"
 		} else if execution.Err() == context.DeadlineExceeded {
 			failure = "timeout"
