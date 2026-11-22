@@ -206,3 +206,22 @@ func TestBuiltinWebProductLifecycle(t *testing.T) {
 		t.Fatal("product revocation retained the grant", err)
 	}
 }
+
+func TestFetchURLRefusalIsReturnedAsAnOperationResult(t *testing.T) {
+	denied := wire.AppErrorOutput{Error: wire.AppError{Code: "url_blocked", Message: wire.ErrorMessages["url_blocked"]}}
+	body, err := json.Marshal(denied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	op := d.Operation{ID: uuid.MustParse("019a8811-0000-7000-8000-000000000175"), State: "unknown", Dispatch: "may_have_dispatched"}
+	result := response(d.Result{Operation: op, Body: body})
+	encoded, err := json.Marshal(result)
+	if err != nil || wire.Validate("ExecutionResult", encoded) != nil || result.Result == nil || result.Operation.ResultAvailability != "available" {
+		t.Fatal("observed Fetch refusal must be available to the caller")
+	}
+	payload, err := result.Result.MarshalJSON()
+	var received wire.AppErrorOutput
+	if err != nil || json.Unmarshal(payload, &received) != nil || received != denied {
+		t.Fatal("provider URL refusal was not preserved")
+	}
+}
