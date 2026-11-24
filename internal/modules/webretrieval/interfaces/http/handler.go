@@ -25,8 +25,10 @@ type Handler struct {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/web-retrieval/delegations", h.Mint)
 	mux.HandleFunc("POST /v1/web-retrieval/operations", h.Execute)
-	mux.HandleFunc("POST /v2/web-retrieval/searches", h.executeSearch)
-	mux.HandleFunc("GET /v2/web-retrieval/searches/{scope}/{id}", h.readSearch)
+	mux.HandleFunc("POST /v2/web-retrieval/searches", func(w http.ResponseWriter, r *http.Request) { h.executeScoped(w, r, false) })
+	mux.HandleFunc("POST /v2/web-retrieval/fetches", func(w http.ResponseWriter, r *http.Request) { h.executeScoped(w, r, true) })
+	mux.HandleFunc("GET /v2/web-retrieval/searches/{scope}/{id}", func(w http.ResponseWriter, r *http.Request) { h.readScoped(w, r, "kimi_web_search_pro") })
+	mux.HandleFunc("GET /v2/web-retrieval/fetches/{scope}/{id}", func(w http.ResponseWriter, r *http.Request) { h.readScoped(w, r, "kimi_web_fetch") })
 	mux.HandleFunc("GET /v1/web-retrieval/operations/{id}", h.Get)
 	mux.HandleFunc("POST /v1/web-retrieval/operations/{id}/cancel", h.Cancel)
 	mux.HandleFunc("POST /v1/web-retrieval/bindings/{id}/revoke", h.Revoke)

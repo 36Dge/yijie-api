@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	wire "github.com/36Dge/yijie-api/internal/contracts/builtinweb"
 	d "github.com/36Dge/yijie-api/internal/modules/webretrieval/domain"
@@ -19,6 +20,14 @@ func Validate(name string, raw []byte) error {
 	return nil
 }
 func Request(raw []byte) (d.Request, error) {
+	return request(raw, false)
+}
+
+func ScopedRequest(raw []byte) (d.Request, error) {
+	return request(raw, true)
+}
+
+func request(raw []byte, scoped bool) (d.Request, error) {
 	if err := Validate("OperationRequest", raw); err != nil {
 		return d.Request{}, err
 	}
@@ -39,6 +48,17 @@ func Request(raw []byte) (d.Request, error) {
 	dec.UseNumber()
 	if dec.Decode(&args) != nil {
 		return d.Request{}, d.Invalid
+	}
+	if scoped && tool == "kimi_web_fetch" {
+		fields, ok := args.(map[string]any)
+		if !ok {
+			return d.Request{}, d.Invalid
+		}
+		page, ok := fields["url"].(string)
+		if !ok {
+			return d.Request{}, d.Invalid
+		}
+		fields["url"], _, _ = strings.Cut(page, "#")
 	}
 	canonical, err := json.Marshal(args)
 	if err != nil {

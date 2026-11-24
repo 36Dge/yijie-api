@@ -12,30 +12,48 @@ import (
 	"github.com/google/uuid"
 )
 
-func (h *Handler) executeSearch(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) executeScoped(w http.ResponseWriter, r *http.Request, fetch bool) {
 	b, err := h.grant(r)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	raw, err := read(r, "DeepSearchRequest")
+	schema := "DeepSearchRequest"
+	if fetch {
+		schema = "ScopedFetchRequest"
+	}
+	raw, err := read(r, schema)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	var message wire.DeepSearchRequest
-	if json.Unmarshal(raw, &message) != nil || message.ScopeId == uuid.Nil {
+	var scope uuid.UUID
+	var deadline int
+	var body []byte
+	if fetch {
+		var message wire.ScopedFetchRequest
+		if err = json.Unmarshal(raw, &message); err == nil {
+			scope, deadline = message.ScopeId, message.DeadlineUnixMs
+			body, err = json.Marshal(message.Request)
+		}
+	} else {
+		var message wire.DeepSearchRequest
+		if err = json.Unmarshal(raw, &message); err == nil {
+			scope, deadline = message.ScopeId, message.DeadlineUnixMs
+			body, err = json.Marshal(message.Request)
+		}
+	}
+	if err != nil || scope == uuid.Nil {
 		fail(w, d.Invalid)
 		return
 	}
-	body, _ := json.Marshal(message.Request)
-	q, err := webwire.Request(body)
+	q, err := webwire.ScopedRequest(body)
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	q.SearchScope = message.ScopeId
-	q.Deadline = time.UnixMilli(int64(message.DeadlineUnixMs))
+	q.SearchScope = scope
+	q.Deadline = time.UnixMilli(int64(deadline))
 	result, err := h.Service.Execute(r.Context(), b, q)
 	if err != nil {
 		var admission d.AdmissionFailure
@@ -55,7 +73,7 @@ func (h *Handler) executeSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	write(w, 200, searchResponse(q.ID, result, relation))
 }
-func (h *Handler) readSearch(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) readScoped(w http.ResponseWriter, r *http.Request, tool string) {
 	b, err := h.grant(r)
 	if err != nil {
 		fail(w, err)
@@ -70,6 +88,10 @@ func (h *Handler) readSearch(w http.ResponseWriter, r *http.Request) {
 	result, err := h.Service.ReadScoped(r.Context(), b, scope, id)
 	if err != nil {
 		fail(w, err)
+		return
+	}
+	if result.Operation.Tool != tool {
+		fail(w, d.Denied)
 		return
 	}
 	write(w, 200, searchResponse(id, result, "reused"))

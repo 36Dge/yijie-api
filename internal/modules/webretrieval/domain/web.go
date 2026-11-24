@@ -61,6 +61,7 @@ type SearchFacts struct {
 	ErrorCode Code
 }
 type Operation struct {
+	Tool              string
 	SearchScope       uuid.UUID
 	Revision          int64
 	Facts             SearchFacts

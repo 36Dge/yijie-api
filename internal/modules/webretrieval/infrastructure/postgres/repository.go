@@ -104,11 +104,11 @@ func binding(ctx context.Context, tx pgx.Tx, b d.Binding) error {
 	return err
 }
 
-const operationColumns = `o.id,o.binding_id,b.tenant_id,b.user_id,b.authorization_revision,o.parameter_digest,o.state,o.dispatch,o.deadline,COALESCE(o.claim_id,'00000000-0000-0000-0000-000000000000'),COALESCE(o.executor_instance,'00000000-0000-0000-0000-000000000000'),COALESCE(o.search_scope,'00000000-0000-0000-0000-000000000000'),COALESCE(o.admitted_revision,0),o.transport_fact,o.search_outcome,COALESCE(o.search_error,'')`
+const operationColumns = `o.id,o.binding_id,b.tenant_id,b.user_id,b.authorization_revision,o.parameter_digest,o.tool,o.state,o.dispatch,o.deadline,COALESCE(o.claim_id,'00000000-0000-0000-0000-000000000000'),COALESCE(o.executor_instance,'00000000-0000-0000-0000-000000000000'),COALESCE(o.search_scope,'00000000-0000-0000-0000-000000000000'),COALESCE(o.admitted_revision,0),o.transport_fact,o.search_outcome,COALESCE(o.search_error,'')`
 
 func scan(row pgx.Row) (d.Operation, error) {
 	var o d.Operation
-	err := row.Scan(&o.ID, &o.Binding.ID, &o.Binding.Scope.Tenant, &o.Binding.Scope.User, &o.Binding.Scope.Revision, &o.Digest, &o.State, &o.Dispatch, &o.Deadline, &o.ClaimID, &o.Executor, &o.SearchScope, &o.Revision, &o.Facts.Transport, &o.Facts.Outcome, &o.Facts.ErrorCode)
+	err := row.Scan(&o.ID, &o.Binding.ID, &o.Binding.Scope.Tenant, &o.Binding.Scope.User, &o.Binding.Scope.Revision, &o.Digest, &o.Tool, &o.State, &o.Dispatch, &o.Deadline, &o.ClaimID, &o.Executor, &o.SearchScope, &o.Revision, &o.Facts.Transport, &o.Facts.Outcome, &o.Facts.ErrorCode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return o, d.Denied
 	}
@@ -183,7 +183,7 @@ func (r *Repository) Admit(ctx context.Context, b d.Binding, request d.Request) 
 	if active >= wire.SubjectConcurrency {
 		return o, false, d.Busy
 	}
-	o = d.Operation{ID: request.ID, Binding: b, Digest: request.Digest, State: "ready", Dispatch: "not_dispatched", Deadline: now.Add(45 * time.Second).Truncate(time.Millisecond)}
+	o = d.Operation{ID: request.ID, Tool: request.Tool, Binding: b, Digest: request.Digest, State: "ready", Dispatch: "not_dispatched", Deadline: now.Add(45 * time.Second).Truncate(time.Millisecond)}
 	var scope, revision any
 	if request.SearchScope != uuid.Nil {
 		if !request.Deadline.After(now) {
